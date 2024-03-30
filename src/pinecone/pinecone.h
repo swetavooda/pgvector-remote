@@ -105,7 +105,7 @@ typedef struct PineconeBufferMetaPageData
 
     // INSERT PAGE
     BlockNumber insert_page;
-    int n_tuples_since_last_checkpoint; // (does not include the tuples in the insert page)
+    int n_tuples_since_last_checkpoint; // (does not include the tuples on the insert page)
 } PineconeBufferMetaPageData;
 typedef PineconeBufferMetaPageData *PineconeBufferMetaPage;
 

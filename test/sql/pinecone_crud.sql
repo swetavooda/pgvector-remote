@@ -28,6 +28,7 @@ VALUES ('https://fakehost/describe_index_stats', 'GET', '{"namespaces":{},"dimen
 CREATE INDEX i2 ON t USING pinecone (val) WITH (host = 'fakehost');
 
 
+
 -- INSERT INTO TABLE
 -- mock upsert
 INSERT INTO pinecone_mock (url_prefix, method, response)
@@ -35,6 +36,8 @@ VALUES ('https://fakehost/vectors/upsert', 'POST', '{"upsertedCount":1}');
 -- insert into table
 INSERT INTO t (id, val) VALUES (1, '[1,0,0]');
 INSERT INTO t (id, val) VALUES (2, '[1,0,1]');
+
+SELECT pinecone_print_index('i2');
 
 
 -- SELECT FROM TABLE
@@ -60,18 +63,19 @@ VALUES ('https://fakehost/vectors/fetch', 'GET', $${
         "details":      []
 }$$);
 -- select from table
-SELECT id FROM t ORDER BY val <-> '[1, 1, 1]' LIMIT 1;
+SELECT id,val,val<->'[1,1,1]' as dist FROM t ORDER BY val <-> '[1, 1, 1]';
 
+SELECT pinecone_print_index('i2');
 
 -- UPDATE A TUPLE AND SELECT FROM TABLE
 -- this will trigger an insert, we'll reuse mock upsertedCount:1
 UPDATE t SET val = '[1, 1, 1]' WHERE id = 1;
 -- this will trigger a query and a fetch request, we'll reuse the mock responses
-SELECT id FROM t ORDER BY val <-> '[1,1,1]' LIMIT 1;
+SELECT id,val,val<->'[1,1,1]' as dist FROM t ORDER BY val <-> '[1,1,1]'; 
 
 -- DELETE AND QUERY FROM TABLE
 DELETE FROM t WHERE id = 1;
 -- this will trigger a query and a fetch request, we'll reuse the mock responses
-SELECT id FROM t ORDER BY val <-> '[1,1,1]' LIMIT 1;
+SELECT id,val,val<->'[1,1,1]' as dist FROM t ORDER BY val <-> '[1,1,1]';
 
 DROP TABLE t;

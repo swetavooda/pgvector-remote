@@ -224,8 +224,10 @@ void FlushToPinecone(Relation index)
     // begin the index fetch (this the preferred way for an index to request tuples from its base table)
     IndexFetchTableData *fetchData = baseTableRel->rd_tableam->index_fetch_begin(baseTableRel);
     TupleTableSlot *slot = MakeSingleTupleTableSlot(baseTableRel->rd_att, &TTSOpsBufferHeapTuple);
-    bool call_again, all_dead, found;
-    char* vector_id; // todo: free
+    bool call_again = false;
+    bool all_dead = false;
+    bool found = false;
+    char* vector_id = NULL; // todo: free
 
     // acquire the pinecone insertion lock
     LOCKTAG pinecone_flush_lock;
