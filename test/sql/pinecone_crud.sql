@@ -3,6 +3,8 @@
 \o /dev/null
 -- apikey
 SET pinecone.api_key = 'fake';
+-- apikey
+SET pinecone.api_key = 'fake';
 -- logging level
 SET client_min_messages = 'notice';
 -- flush each vector individually
