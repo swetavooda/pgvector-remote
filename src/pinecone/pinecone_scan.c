@@ -61,15 +61,10 @@ PineconeCheckpoint get_best_fetched_checkpoint(Relation index, PineconeCheckpoin
     PineconeCheckpoint invalid_checkpoint = {INVALID_CHECKPOINT_NUMBER, InvalidBlockNumber, {{0, 0},0}, 0, false};
     cJSON* vectors = cJSON_GetObjectItemCaseSensitive(fetch_results, "vectors");
     cJSON* vector;
-    clock_t start, end;
     int n_fetched = cJSON_GetArraySize(vectors);
     ItemPointerData* fetched_tids = palloc(sizeof(ItemPointerData) * n_fetched);
     int k = 0;
 
-    start = clock();
-    cJSON_Print(vectors);
-    end = clock();
-    elog(DEBUG1, "time to print fetched vectors: %f", (double)(end - start) / CLOCKS_PER_SEC);
     cJSON_ArrayForEach(vector, vectors) {
         char* id_str = vector->string;
         fetched_tids[k++] = pinecone_id_get_heap_tid(id_str);
