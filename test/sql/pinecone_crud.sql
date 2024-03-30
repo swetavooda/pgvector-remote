@@ -39,9 +39,6 @@ VALUES ('https://fakehost/vectors/upsert', 'POST', '{"upsertedCount":1}');
 INSERT INTO t (id, val) VALUES (1, '[1,0,0]');
 INSERT INTO t (id, val) VALUES (2, '[1,0,1]');
 
-SELECT pinecone_print_index('i2');
-
-
 -- SELECT FROM TABLE
 -- mock query
 INSERT INTO pinecone_mock (url_prefix, method, response)
@@ -66,8 +63,6 @@ VALUES ('https://fakehost/vectors/fetch', 'GET', $${
 }$$);
 -- select from table
 SELECT id,val,val<->'[1,1,1]' as dist FROM t ORDER BY val <-> '[1, 1, 1]';
-
-SELECT pinecone_print_index('i2');
 
 -- UPDATE A TUPLE AND SELECT FROM TABLE
 -- this will trigger an insert, we'll reuse mock upsertedCount:1
