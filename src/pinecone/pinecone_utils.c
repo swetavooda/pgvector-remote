@@ -4,6 +4,7 @@
 #include "access/generic_xlog.h"
 #include "access/relscan.h"
 #include "utils/builtins.h"
+#include "utils/lsyscache.h"
 
 cJSON* tuple_get_pinecone_vector(TupleDesc tup_desc, Datum *values, bool *isnull, char *vector_id)
 {
@@ -26,13 +27,22 @@ cJSON* tuple_get_pinecone_vector(TupleDesc tup_desc, Datum *values, bool *isnull
             case FLOAT8OID:
                 cJSON_AddItemToObject(metadata, NameStr(td->attname), cJSON_CreateNumber(DatumGetFloat8(values[i])));
                 break;
+            case INT4OID:
+                cJSON_AddItemToObject(metadata, NameStr(td->attname), cJSON_CreateNumber(DatumGetInt32(values[i])));
+                break;
             case TEXTOID:
                 cJSON_AddItemToObject(metadata, NameStr(td->attname), cJSON_CreateString(text_to_cstring(DatumGetTextP(values[i]))));
+                break;
+            case TEXTARRAYOID:
+                {
+                    cJSON* json_array = text_array_get_json(values[i]);
+                    cJSON_AddItemToObject(metadata, NameStr(td->attname), json_array);
+                }
                 break;
             default:
                 ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
                                 errmsg("Invalid column type when decoding tuple."),
-                                errhint("Pinecone index only supports boolean, float8 and text columns")));
+                                errhint("Pinecone index only supports boolean, float8, text, and textarray columns")));
         }
     }
     // add to vector object
@@ -241,4 +251,33 @@ hash_tid(ItemPointerData tid, int seed)
 	x.tid = tid;
 
 	return murmurhash64(x.i + seed);
+}
+
+/* text_array_get_json */
+cJSON* text_array_get_json(Datum value) {
+    ArrayType *array = DatumGetArrayTypeP(value);
+    int nelems = ArrayGetNItems(ARR_NDIM(array), ARR_DIMS(array));
+    Datum* elems;
+    bool* nulls;
+    int16 elmlen;
+    bool elmbyval;
+    char elmalign;
+    Oid elmtype = ARR_ELEMTYPE(array);
+    cJSON *json_array = cJSON_CreateArray();
+
+    // get array element type info
+    get_typlenbyvalalign(elmtype, &elmlen, &elmbyval, &elmalign);
+
+    // deconstruct array
+    deconstruct_array(array, elmtype, elmlen, elmbyval, elmalign, &elems, &nulls, &nelems);
+
+    // copy array elements to json array
+    for (int j = 0; j < nelems; j++) {
+        if (!nulls[j]) {
+            Datum elem = elems[j];
+            char* cstr = TextDatumGetCString(elem);
+            cJSON_AddItemToArray(json_array, cJSON_CreateString(cstr));
+        }
+    }
+    return json_array;
 }

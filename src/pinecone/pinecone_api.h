@@ -19,7 +19,7 @@ typedef struct {
 size_t write_callback(char *contents, size_t size, size_t nmemb, void *userdata);
 struct curl_slist *create_common_headers(const char *api_key);
 void set_curl_options(CURL *hnd, const char *api_key, const char *url, const char *method, ResponseData *response_data);
-cJSON* generic_pinecone_request(const char *api_key, const char *url, const char *method, cJSON *body);
+cJSON* generic_pinecone_request(const char *api_key, const char *url, const char *method, cJSON *body, bool expect_json_response);
 cJSON* describe_index(const char *api_key, const char *index_name);
 cJSON* pinecone_get_index_stats(const char *api_key, const char *index_host);
 cJSON* list_indexes(const char *api_key);

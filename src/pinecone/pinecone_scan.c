@@ -122,7 +122,7 @@ IndexScanDesc pinecone_beginscan(Relation index, int nkeys, int norderbys)
 cJSON* pinecone_build_filter(Relation index, ScanKey keys, int nkeys) {
     cJSON *filter = cJSON_CreateObject();
     cJSON *and_list = cJSON_CreateArray();
-    const char* pinecone_filter_operators[] = {"$lt", "$lte", "$eq", "$gte", "$gt", "$ne"};
+    const char* pinecone_filter_operators[] = {"$lt", "$lte", "$eq", "$gte", "$gt", "$ne", "$in"};
     for (int i = 0; i < nkeys; i++)
     {
         cJSON *key_filter = cJSON_CreateObject();
@@ -130,25 +130,55 @@ cJSON* pinecone_build_filter(Relation index, ScanKey keys, int nkeys) {
         cJSON *condition_value = NULL;
         FormData_pg_attribute* td = TupleDescAttr(index->rd_att, keys[i].sk_attno - 1);
 
-        switch (td->atttypid)
-        {
-            case BOOLOID:
-                condition_value = cJSON_CreateBool(DatumGetBool(keys[i].sk_argument));
-                break;
-            case FLOAT8OID:
-                condition_value = cJSON_CreateNumber(DatumGetFloat8(keys[i].sk_argument));
-                break;
-            case TEXTOID:
-                condition_value = cJSON_CreateString(text_to_cstring(DatumGetTextP(keys[i].sk_argument)));
-                break;
-            default:
-                continue; // skip unsupported types
+        if (td->atttypid == TEXTARRAYOID && keys[i].sk_strategy == PINECONE_STRATEGY_ARRAY_CONTAINS) {
+            // contains (list_of_strings @> ARRAY[tag1, tag2])
+            // $and: [ {list_of_strings: {$in: [tag1]}}, {list_of_strings: {$in: [tag2]}} ]
+            cJSON* tags = text_array_get_json(keys[i].sk_argument);
+            cJSON* tag;
+            cJSON_ArrayForEach(tag, tags) {
+                cJSON* condition_contains_tag = cJSON_CreateObject(); // list_of_strings: {$in: [tag1]}
+                cJSON* predicate_contains_tag = cJSON_CreateObject(); // {$in: [tag1]}
+                cJSON* single_tag_list = cJSON_CreateArray(); // [tag1]
+                cJSON_AddItemToArray(single_tag_list, cJSON_Duplicate(tag, true)); // [tag1]
+                cJSON_AddItemToObject(predicate_contains_tag, "$in", single_tag_list); // {$in: [tag1]}
+                cJSON_AddItemToObject(condition_contains_tag, td->attname.data, predicate_contains_tag); // list_of_strings: {$in: [tag1]}
+                cJSON_AddItemToArray(and_list, condition_contains_tag);
+            }
+            // cJSON_Delete(tags);
+        } else {
+            switch (td->atttypid)
+            {
+                case BOOLOID:
+                    condition_value = cJSON_CreateBool(DatumGetBool(keys[i].sk_argument));
+                    break;
+                case FLOAT8OID:
+                    condition_value = cJSON_CreateNumber(DatumGetFloat8(keys[i].sk_argument));
+                    break;
+                case TEXTOID:
+                    condition_value = cJSON_CreateString(text_to_cstring(DatumGetTextP(keys[i].sk_argument)));
+                    break;
+                case TEXTARRAYOID:
+                    // overlap
+                    if (keys[i].sk_strategy != PINECONE_STRATEGY_ARRAY_OVERLAP) {
+                        ereport(ERROR,
+                                (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+                                 errmsg("Unsupported operator for text[] datatype. Must be && (overlap)")));
+                    }
+                    condition_value = text_array_get_json(keys[i].sk_argument);
+                    break;
+                    // contains (list_of_strings @> ARRAY[tag1, tag2])
+                    // $and: [ {list_of_strings: {$in: [tag1]}}, {list_of_strings: {$in: [tag2]}} ]
+                default:
+                    ereport(ERROR,
+                            (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+                             errmsg("Unsupported datatype for pinecone index scan. Must be one of bool, float8, text, text[]")));
+                    break;
+            }
+            // this only works if all datatypes use the same strategy naming convention. todo: document this
+            cJSON_AddItemToObject(condition, pinecone_filter_operators[keys[i].sk_strategy - 1], condition_value);
+            cJSON_AddItemToObject(key_filter, td->attname.data, condition);
+            cJSON_AddItemToArray(and_list, key_filter);
         }
-        
-        // this only works if all datatypes use the same strategy naming convention. todo: document this
-        cJSON_AddItemToObject(condition, pinecone_filter_operators[keys[i].sk_strategy - 1], condition_value);
-        cJSON_AddItemToObject(key_filter, td->attname.data, condition);
-        cJSON_AddItemToArray(and_list, key_filter);
     }
     cJSON_AddItemToObject(filter, "$and", and_list);
     return filter;
@@ -185,7 +215,6 @@ void pinecone_rescan(IndexScanDesc scan, ScanKey keys, int nkeys, ScanKey orderb
     
     // build the filter
     filter = pinecone_build_filter(scan->indexRelation, keys, nkeys);
-    elog(DEBUG1, "filter: %s", cJSON_Print(filter));
 
 	// get the query vector
     query_datum = orderbys[0].sk_argument;

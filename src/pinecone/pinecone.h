@@ -36,6 +36,10 @@
 #define DEFAULT_SPEC "{}"
 #define DEFAULT_HOST ""
 
+// strategy numbers
+#define PINECONE_STRATEGY_ARRAY_OVERLAP 7
+#define PINECONE_STRATEGY_ARRAY_CONTAINS 2
+
 // structs
 typedef struct PineconeScanOpaqueData
 {
@@ -209,6 +213,7 @@ cJSON* index_tuple_get_pinecone_vector(Relation index, IndexTuple itup);
 cJSON* heap_tuple_get_pinecone_vector(Relation heap, HeapTuple htup);
 char* pinecone_id_from_heap_tid(ItemPointerData heap_tid);
 ItemPointerData pinecone_id_get_heap_tid(char *id);
+cJSON* text_array_get_json(Datum value);
 // read and write meta pages
 PineconeStaticMetaPageData PineconeSnapshotStaticMeta(Relation index);
 PineconeBufferMetaPageData PineconeSnapshotBufferMeta(Relation index);

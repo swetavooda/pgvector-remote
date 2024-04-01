@@ -3,6 +3,8 @@
 #include "utils/guc.h"
 #include <access/reloptions.h>
 
+#include <float.h>  
+
 
 #if PG_VERSION_NUM < 150000
 #define MarkGUCPrefixReserved(x) EmitWarningsOnPlaceholders(x)
@@ -90,8 +92,8 @@ void no_costestimate(PlannerInfo *root, IndexPath *path, double loop_count,
 {
     // todo: consider running a health check on the remote index and return infinity if it is not healthy
     if (list_length(path->indexorderbycols) == 0 || linitial_int(path->indexorderbycols) != 0) {
-        elog(DEBUG1, "Index must be ordered by the first column");
-        *indexTotalCost = 1000000;
+        elog(DEBUG1, "Pinecone index must be ordered by distance. Returning infinity.");
+        *indexTotalCost = DBL_MAX;
         return;
     }
 };

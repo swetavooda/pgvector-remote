@@ -60,7 +60,7 @@ void set_curl_options(CURL *hnd, const char *api_key, const char *url, const cha
 // Declare the CURL handle as a global variable
 CURL *hnd_t;
 
-cJSON* generic_pinecone_request(const char *api_key, const char *url, const char *method, cJSON *body) {
+cJSON* generic_pinecone_request(const char *api_key, const char *url, const char *method, cJSON *body, bool expect_json_response) {
     // CURL *hnd = curl_easy_init();
     ResponseData response_data = {"", NULL, NULL, 0, ""};
     cJSON *response_json, *error;
@@ -105,6 +105,11 @@ cJSON* generic_pinecone_request(const char *api_key, const char *url, const char
         elog(ERROR, "curl_easy_perform() failed: %s", curl_easy_strerror(ret));
     }
 
+
+    // parse the response
+    if (!expect_json_response) {
+        return NULL;
+    }
     response_json = cJSON_Parse(response_data.data);
 
     if (response_json == NULL) {
@@ -124,19 +129,19 @@ cJSON* generic_pinecone_request(const char *api_key, const char *url, const char
  */
 cJSON* describe_index(const char *api_key, const char *index_name) {
     char url[100] = "https://api.pinecone.io/indexes/"; strcat(url, index_name);
-    return generic_pinecone_request(api_key, url, "GET", NULL);
+    return generic_pinecone_request(api_key, url, "GET", NULL, true);
 }
 
 cJSON* pinecone_get_index_stats(const char *api_key, const char *index_host) {
     cJSON* resp;
     char url[100] = "https://"; strcat(url, index_host); strcat(url, "/describe_index_stats");
-    resp = generic_pinecone_request(api_key, url, "GET", NULL);
+    resp = generic_pinecone_request(api_key, url, "GET", NULL, true);
     return resp;
 }
 
 cJSON* list_indexes(const char *api_key) {
     cJSON* response_json;
-    response_json = generic_pinecone_request(api_key, "https://api.pinecone.io/indexes", "GET", NULL);
+    response_json = generic_pinecone_request(api_key, "https://api.pinecone.io/indexes", "GET", NULL, true);
     return cJSON_GetObjectItemCaseSensitive(response_json, "indexes");
 }
 
@@ -145,19 +150,19 @@ cJSON* pinecone_delete_vectors(const char *api_key, const char *index_host, cJSO
     char url[300];
     sprintf(url, "https://%s/vectors/delete", index_host);
     cJSON_AddItemToObject(request, "ids", ids);
-    return generic_pinecone_request(api_key, url, "POST", request);
+    return generic_pinecone_request(api_key, url, "POST", request, true);
 }
 
 cJSON* pinecone_delete_index(const char *api_key, const char *index_name) {
     char url[100] = "https://api.pinecone.io/indexes/"; strcat(url, index_name);
-    return generic_pinecone_request(api_key, url, "DELETE", NULL);
+    return generic_pinecone_request(api_key, url, "DELETE", NULL, false);
 }
 
 // delete all vectors in an index
 cJSON* pinecone_delete_all(const char *api_key, const char *index_host) {
     char url[300];
     sprintf(url, "https://%s/vectors/delete", index_host);
-    return generic_pinecone_request(api_key, url, "POST", cJSON_Parse("{\"deleteAll\": true}"));
+    return generic_pinecone_request(api_key, url, "POST", cJSON_Parse("{\"deleteAll\": true}"), true);
 }
 
 cJSON* pinecone_list_vectors(const char *api_key, const char *index_host, int limit, char* pagination_token) {
@@ -167,7 +172,7 @@ cJSON* pinecone_list_vectors(const char *api_key, const char *index_host, int li
     } else {
         sprintf(url, "https://%s/vectors/list?limit=%d", index_host, limit);
     }
-    return cJSON_GetObjectItem(generic_pinecone_request(api_key, url, "GET", NULL), "vectors");
+    return cJSON_GetObjectItem(generic_pinecone_request(api_key, url, "GET", NULL, true), "vectors");
 }
 
 /* name, dimension, metric
@@ -181,7 +186,7 @@ cJSON* pinecone_create_index(const char *api_key, const char *index_name, const 
     cJSON_AddItemToObject(request, "dimension", cJSON_CreateNumber(dimension));
     cJSON_AddItemToObject(request, "metric", cJSON_CreateString(metric));
     cJSON_AddItemToObject(request, "spec", spec);
-    return generic_pinecone_request(api_key, "https://api.pinecone.io/indexes", "POST", request);
+    return generic_pinecone_request(api_key, "https://api.pinecone.io/indexes", "POST", request, true);
 }
 
 CURL* multi_hnd_for_query;

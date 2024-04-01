@@ -377,6 +377,22 @@ CREATE OPERATOR CLASS float_pinecone_ops
 	OPERATOR 5 > (float8, float8),
 	OPERATOR 6 != (float8, float8);
 
+-- list of strings
+CREATE OPERATOR CLASS list_of_strings_pinecone_ops
+	DEFAULT FOR TYPE text[] USING pinecone AS
+	OPERATOR 7 && (anyarray, anyarray), -- overlap
+	OPERATOR 2 @> (anyarray, anyarray);
+
+-- int opclass for pinecone
+CREATE OPERATOR CLASS int_pinecone_ops
+	DEFAULT FOR TYPE int4 USING pinecone AS
+	OPERATOR 1 < (int4, int4),
+	OPERATOR 2 <= (int4, int4),
+	OPERATOR 3 = (int4, int4),
+	OPERATOR 4 >= (int4, int4),
+	OPERATOR 5 > (int4, int4),
+	OPERATOR 6 != (int4, int4);
+
 -- we want consistent naming
 -- < 1
 -- <= 2
