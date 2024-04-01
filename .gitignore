@@ -17,3 +17,4 @@ src/todo.md
 .vscode/settings.json
 todo.md
 logfile
+test/sql/scratch.sql
