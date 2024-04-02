@@ -1,15 +1,15 @@
 # pgvector-remote
 
-pgvector-remote is a PostgreSQL extension developed by the Georgia Tech Database Labs. It builds upon the functionality provided by pgvector, introducing seamless integration with dedicated vector stores like Pinecone, with plans to support other vendors in the future.
+pgvector-remote is a PostgreSQL extension developed by the Georgia Tech Database Labs. It builds upon the functionality provided by pgvector, introducing seamless integration with dedicated remote vector stores like Pinecone, with plans to support other vendors in the future.
 
-This extension simplifies the process of storing and retrieving vectors in vector stores while leveraging the power and familiarity of PostgreSQL.
+This extension simplifies the process of storing and retrieving vectors while leveraging the power and familiarity of PostgreSQL, along with the rich functionality and performance of serverless vector stores.
 
 Supports:
 - exact and approximate nearest neighbor search
-- Metadata filtering with vector similarity search
-- L2 distance, inner product, and cosine distance
-- vectors are buffered and batch-inserted into remote stores per user-defined sizes
-- Seamless data integration and synchronization between pgvector and Pinecone 
+- metadata filtering with vector similarity search
+- L2 distance, inner product, and cosine distance metrics
+- buffering and batch-insertion of vectors into remote stores per user-defined sizes
+- seamless data integration and synchronization between pgvector and Pinecone 
 
 ## Installation
 
@@ -319,6 +319,7 @@ Thanks to:
 - [k-means++: The Advantage of Careful Seeding](https://theory.stanford.edu/~sergei/papers/kMeansPP-soda.pdf)
 - [Concept Decompositions for Large Sparse Text Data using Clustering](https://www.cs.utexas.edu/users/inderjit/public_papers/concept_mlj.pdf)
 - [Efficient and Robust Approximate Nearest Neighbor Search using Hierarchical Navigable Small World Graphs](https://arxiv.org/ftp/arxiv/papers/1603/1603.09320.pdf)
+- [Pinecone: Vector database and search service designed for real-time applications](https://docs.pinecone.io/introduction)
 
 ## Contributing
 
