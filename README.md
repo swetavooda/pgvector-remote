@@ -308,9 +308,9 @@ docker pull kslohith17/pgvector-remote:latest
 
 This contains postgres along with pgvector-remote configured to run on it.
 
-## Thanks
+## Credits
 
-Thanks to:
+We give special thanks to these projects, which enabled us to develop our extension:
 
 - [pgvector: Open-source vector similarity search for Postgres](https://github.com/pgvector/pgvector)
 - [PASE: PostgreSQL Ultra-High-Dimensional Approximate Nearest Neighbor Search Extension](https://dl.acm.org/doi/pdf/10.1145/3318464.3386131)
