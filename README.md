@@ -215,11 +215,11 @@ SELECT category_id, AVG(embedding) FROM items GROUP BY category_id;
 
 ### Query Options
 
-pinecone.top_k: Get the top K relevant results from pinecone.  
-pinecone.vectors_per_request: Number of vectors per request.  
-pinecone.requests_per_batch: Number of requests to be sent in one batch.  
-The buffer size is calculated as pinecone.vectors_per_request * pinecone.requests_per_batch  
-pinecone.max_buffer_scan: Pinecone max buffer search  
+* **pinecone.top_k:** Get the top K relevant results from pinecone.  
+* **pinecone.vectors_per_request:** Number of vectors per request.  
+* **pinecone.requests_per_batch:** Number of requests to be sent in one batch.  
+* The buffer size is calculated as ***pinecone.vectors_per_request * pinecone.requests_per_batch***  
+* **pinecone.max_buffer_scan:** Pinecone max buffer search  
 
 ## Reference
 
