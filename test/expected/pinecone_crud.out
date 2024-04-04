@@ -1,10 +1,6 @@
 -- SETUP
 -- suppress output
 \o /dev/null
--- apikey
-SET pinecone.api_key = 'fake';
--- apikey
-SET pinecone.api_key = 'fake';
 -- logging level
 SET client_min_messages = 'notice';
 -- flush each vector individually
@@ -12,24 +8,38 @@ SET pinecone.vectors_per_request = 1;
 SET pinecone.requests_per_batch = 1;
 -- disable flat scan to force use of the index
 SET enable_seqscan = off;
--- Set up mock responses
-SET pinecone.use_mock_response = true;
-DROP TABLE IF EXISTS pinecone_mock;
-NOTICE:  table "pinecone_mock" does not exist, skipping
-SELECT pinecone_create_mock_table(); -- initialize the mock table
-NOTICE:  Mock table created
+-- Testing database is responsible for initializing the mock table with 
+-- SELECT pinecone_create_mock_table(); 
 -- CREATE TABLE
 DROP TABLE IF EXISTS t;
 NOTICE:  table "t" does not exist, skipping
 CREATE TABLE t (id int, val vector(3));
 \o
 -- CREATE INDEX
+-- mock create index
+INSERT INTO pinecone_mock (url_prefix, method, response)
+VALUES ('https://api.pinecone.io/indexes', 'POST', $${
+        "name": "invalid",
+        "metric": "euclidean",
+        "dimension": 3,
+        "status": {
+                "ready": true,
+                "state": "Ready"
+        },
+        "host": "fakehost",
+        "spec": {
+                "serverless": {
+                        "cloud": "aws",
+                        "region": "us-west-2"
+                }
+        }
+}$$);
 -- mock describe index stats
 INSERT INTO pinecone_mock (url_prefix, method, response)
 VALUES ('https://fakehost/describe_index_stats', 'GET', '{"namespaces":{},"dimension":3,"indexFullness":0,"totalVectorCount":0}');
 -- create index
--- CREATE INDEX i2 ON t USING pinecone (val) WITH (spec = '{"serverless":{"cloud":"aws","region":"us-west-2"}}');
-CREATE INDEX i2 ON t USING pinecone (val) WITH (host = 'fakehost');
+CREATE INDEX i2 ON t USING pinecone (val) WITH (spec = '{"serverless":{"cloud":"aws","region":"us-west-2"}}');
+-- CREATE INDEX i2 ON t USING pinecone (val) WITH (host = 'fakehost');
 -- INSERT INTO TABLE
 -- mock upsert
 INSERT INTO pinecone_mock (url_prefix, method, response)
