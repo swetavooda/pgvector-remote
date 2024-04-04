@@ -273,31 +273,16 @@ void FlushToPinecone(Relation index)
 
             // print the tuple
             if (!found) {
-                ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR),
+                ereport(WARNING, (errcode(ERRCODE_INTERNAL_ERROR),
                                 errmsg("Tuple not found in heap")));
+            } else {
+                // extract the indexed columns
+                FormIndexDatum(indexInfo, slot, NULL, index_values, index_isnull);
+
+                vector_id = pinecone_id_from_heap_tid(buffer_tup.tid);
+                json_vector = tuple_get_pinecone_vector(index->rd_att, index_values, index_isnull, vector_id);
+                cJSON_AddItemToArray(json_vectors, json_vector);
             }
-            // else {
-                // // todo: cut this else block
-                // elog(NOTICE, "Fetched tuple from heap");
-                // for (int k = 0; k < baseTableRel->rd_att->natts; k++) {
-                    // bool isnull;
-                    // FormData_pg_attribute attr = baseTableRel->rd_att->attrs[k];
-                    // Datum datum = slot_getattr(slot, k + 1, &isnull);
-                    // if (!isnull) {
-                        // int datum_str = DatumGetInt32(datum);
-                        // elog(NOTICE, "Attribute %s: %d", NameStr(attr.attname), datum_str);
-                    // }
-                // }
-                // elog(NOTICE, "That tuple had n attributes where n = %d", baseTableRel->rd_att->natts);
-            // }
-
-            // extract the indexed columns
-            FormIndexDatum(indexInfo, slot, NULL, index_values, index_isnull);
-
-            vector_id = pinecone_id_from_heap_tid(buffer_tup.tid);
-            json_vector = tuple_get_pinecone_vector(index->rd_att, index_values, index_isnull, vector_id);
-            cJSON_AddItemToArray(json_vectors, json_vector);
-
         }
 
         // Move to the next page. Stop if there are no more pages.
@@ -315,7 +300,13 @@ void FlushToPinecone(Relation index)
         if (PineconePageGetOpaque(page)->checkpoint.is_checkpoint) {
             GenericXLogState *state = GenericXLogStart(index); // start a new WAL record
  
-            pinecone_bulk_upsert(pinecone_api_key, static_meta.host, json_vectors, pinecone_vectors_per_request);
+            // flush the vectors to pinecone if there are any
+            if (cJSON_GetArraySize(json_vectors) == 0) {
+                ereport(WARNING, (errcode(ERRCODE_INTERNAL_ERROR),
+                                errmsg("No vectors to flush to pinecone")));
+            } else {
+                pinecone_bulk_upsert(pinecone_api_key, static_meta.host, json_vectors, pinecone_vectors_per_request);
+            }
 
             // lock the buffer meta page
             buffer_meta_buf = ReadBuffer(index, PINECONE_BUFFER_METAPAGE_BLKNO);

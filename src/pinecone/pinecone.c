@@ -48,7 +48,7 @@ void PineconeInit(void)
     // todo: you can have a relopts_validator which validates the whole relopt set. This could be used to check that exactly one of spec or host is set
     DefineCustomStringVariable("pinecone.api_key", "Pinecone API key", "Pinecone API key",
                               &pinecone_api_key, "", 
-                              PGC_SUSET, // restrict to superusers, takes immediate effect and is not saved in the configuration file 
+                              PGC_USERSET, // restrict to superusers, takes immediate effect and is not saved in the configuration file 
                               0, NULL, NULL, NULL); // todo: you can have a check_hook that checks that the api key is valid.
     DefineCustomIntVariable("pinecone.top_k", "Pinecone top k", "Pinecone top k",
                             &pinecone_top_k,

@@ -61,20 +61,19 @@ IndexBuildResult *pinecone_build(Relation heap, Relation index, IndexInfo *index
 
     validate_api_key();
 
+    // if the host is specified, check that it is empty
+    if (strcmp(host, DEFAULT_HOST) != 0) {
+        // Describe the index.
+        describe_index_response = pinecone_get_index_stats(pinecone_api_key, host);
+        elog(DEBUG1, "Host specified in reloptions, checking if it is empty. Got response: %s", cJSON_Print(describe_index_response));
+        // todo: check if the index is empty, check that the dimensions and metric match
+        // todo: emit warning when pods fill up
+    }
+
     // if the host is not specified, create a remote index and get the host
     if (strcmp(host, DEFAULT_HOST) == 0) {
         elog(DEBUG1, "Host not specified in reloptions, creating remote index from spec...");
         host = CreatePineconeIndexAndWait(index, spec_json, metric, pinecone_index_name, dimensions);
-    }
-
-
-    // Describe the index.
-    describe_index_response = pinecone_get_index_stats(pinecone_api_key, host);
-    // if the host is specified, check that it is empty
-    if (strcmp(host, DEFAULT_HOST) != 0) {
-        elog(DEBUG1, "Host specified in reloptions, checking if it is empty. Got response: %s", cJSON_Print(describe_index_response));
-        // todo: check if the index is empty, check that the dimensions and metric match
-        // todo: emit warning when pods fill up
     }
 
     // if overwrite is true, delete all vectors in the remote index
@@ -112,16 +111,11 @@ char* CreatePineconeIndexAndWait(Relation index, cJSON* spec_json, VectorMetric 
     host = cJSON_GetStringValue(cJSON_GetObjectItemCaseSensitive(create_response, "host"));
     // now we wait until the pinecone index is done initializing
     // todo: timeout and error handling
-    while (true)
+    while (!cJSON_IsTrue(cJSON_GetObjectItem(cJSON_GetObjectItem(create_response, "status"), "ready")))
     {
-        cJSON *describe_index_response;
         elog(DEBUG1, "Waiting for remote index to initialize...");
         sleep(1);
-        describe_index_response = describe_index(pinecone_api_key, pinecone_index_name);
-        if (cJSON_IsTrue(cJSON_GetObjectItem(cJSON_GetObjectItem(describe_index_response, "status"), "ready")))
-        {
-            break;
-        }
+        create_response = describe_index(pinecone_api_key, pinecone_index_name);
     }
     return host;
 }
