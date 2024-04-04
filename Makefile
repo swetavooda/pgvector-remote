@@ -20,7 +20,7 @@ OPTFLAGS = -march=native -O0 -fno-strict-aliasing -DPINECONE_MOCK -g
 ifeq ($(shell uname -s), Darwin)
 	ifeq ($(shell uname -p), arm)
 		# no difference with -march=armv8.5-a
-		OPTFLAGS =
+		OPTFLAGS = -O0 -fno-strict-aliasing -DPINECONE_MOCK -g
 	endif
 endif
 

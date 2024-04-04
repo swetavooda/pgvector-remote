@@ -1,15 +1,15 @@
 # pgvector-remote
 
-pgvector-remote is a PostgreSQL extension developed by the Georgia Tech Database Labs. It builds upon the functionality provided by pgvector, introducing seamless integration with dedicated vector stores like Pinecone, with plans to support other vendors in the future.
+pgvector-remote is a PostgreSQL extension developed by the Georgia Tech Database Labs. It builds upon the functionality provided by pgvector, introducing seamless integration with dedicated remote vector stores like Pinecone, with plans to support other vendors in the future.
 
-This extension simplifies the process of storing and retrieving vectors in vector stores while leveraging the power and familiarity of PostgreSQL.
+This extension simplifies the process of storing and retrieving vectors while leveraging the power and familiarity of PostgreSQL, along with the rich functionality and performance of serverless vector stores.
 
 Supports:
 - exact and approximate nearest neighbor search
-- Metadata filtering with vector similarity search
-- L2 distance, inner product, and cosine distance
-- vectors are buffered and batch-inserted into remote stores per user-defined sizes
-- Seamless data integration and synchronization between pgvector and Pinecone 
+- metadata filtering with vector similarity search
+- L2 distance, inner product, and cosine distance metrics
+- buffering and batch-insertion of vectors into remote stores per user-defined sizes
+- seamless data integration and synchronization between pgvector and Pinecone 
 
 ## Installation
 
@@ -215,11 +215,11 @@ SELECT category_id, AVG(embedding) FROM items GROUP BY category_id;
 
 ### Query Options
 
-pinecone.top_k: Get the top K relevant results from pinecone.  
-pinecone.vectors_per_request: Number of vectors per request.  
-pinecone.requests_per_batch: Number of requests to be sent in one batch.  
-The buffer size is calculated as pinecone.vectors_per_request * pinecone.requests_per_batch  
-pinecone.max_buffer_scan: Pinecone max buffer search  
+* **pinecone.top_k:** Get the top K relevant results from pinecone.  
+* **pinecone.vectors_per_request:** Number of vectors per request.  
+* **pinecone.requests_per_batch:** Number of requests to be sent in one batch.  
+* The buffer size is calculated as ***pinecone.vectors_per_request * pinecone.requests_per_batch***  
+* **pinecone.max_buffer_scan:** Pinecone max buffer search  
 
 ## Reference
 
@@ -308,9 +308,9 @@ docker pull kslohith17/pgvector-remote:latest
 
 This contains postgres along with pgvector-remote configured to run on it.
 
-## Thanks
+## Credits
 
-Thanks to:
+We give special thanks to these projects, which enabled us to develop our extension:
 
 - [pgvector: Open-source vector similarity search for Postgres](https://github.com/pgvector/pgvector)
 - [PASE: PostgreSQL Ultra-High-Dimensional Approximate Nearest Neighbor Search Extension](https://dl.acm.org/doi/pdf/10.1145/3318464.3386131)
@@ -319,6 +319,7 @@ Thanks to:
 - [k-means++: The Advantage of Careful Seeding](https://theory.stanford.edu/~sergei/papers/kMeansPP-soda.pdf)
 - [Concept Decompositions for Large Sparse Text Data using Clustering](https://www.cs.utexas.edu/users/inderjit/public_papers/concept_mlj.pdf)
 - [Efficient and Robust Approximate Nearest Neighbor Search using Hierarchical Navigable Small World Graphs](https://arxiv.org/ftp/arxiv/papers/1603/1603.09320.pdf)
+- [Pinecone: Vector database and search service designed for real-time applications](https://docs.pinecone.io/introduction)
 
 ## Contributing
 
