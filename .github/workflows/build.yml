@@ -19,12 +19,12 @@ jobs:
         include:
           - postgres: 16
             os: ubuntu-22.04
-          # - postgres: 15
-            # os: ubuntu-22.04
-          # - postgres: 14
-            # os: ubuntu-22.04
-          # - postgres: 13
-            # os: ubuntu-20.04
+          - postgres: 15
+            os: ubuntu-22.04
+          - postgres: 14
+            os: ubuntu-22.04
+          - postgres: 13
+            os: ubuntu-20.04
     steps:
       - uses: actions/checkout@v4
       - run: sudo apt-get update && sudo apt-get install -y libcurl4-openssl-dev
@@ -49,6 +49,7 @@ jobs:
       - run: psql test -c 'select pinecone_create_mock_table()'
       - run: psql test -c 'alter database test set pinecone.api_key = "fake"'
       - run: psql test -c 'alter database test set pinecone.use_mock_response = true'
+      - run: psql test -c 'alter database test set enable_seqscan = off'
 
       # setup the database for testing
       - run: make installcheck REGRESS=pinecone_crud REGRESS_OPTS="--dbname=test --inputdir=./test --use-existing"

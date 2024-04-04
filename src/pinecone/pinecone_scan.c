@@ -391,7 +391,7 @@ bool pinecone_gettuple(IndexScanDesc scan, ScanDirection dir)
     cJSON *match = so->pinecone_results;
     double pinecone_best_dist, buffer_best_dist, dist, dist_lower_bound;
     bool isnull;
-    float rel_tol = 0.05; // relative tolerance for distance recheck; TODO: this should depend on the metric; the inaccuracy arises from pinecone using half precision floats
+    float rel_tol = 0.15; // relative tolerance for distance recheck; TODO: this should depend on the metric; the inaccuracy arises from pinecone using half precision floats
 
     // while the match is in the bloom filter, get the next match
     while (match != NULL) {
