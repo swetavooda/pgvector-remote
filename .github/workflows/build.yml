@@ -8,7 +8,7 @@ on:
     branches:
       - main
       - feature/**
-
+  workflow_dispatch:
 jobs:
   ubuntu:
     runs-on: ${{ matrix.os }}
@@ -19,19 +19,23 @@ jobs:
         include:
           - postgres: 16
             os: ubuntu-22.04
-          - postgres: 15
-            os: ubuntu-22.04
-          - postgres: 14
-            os: ubuntu-22.04
-          - postgres: 13
-            os: ubuntu-20.04
+          # - postgres: 15
+            # os: ubuntu-22.04
+          # - postgres: 14
+            # os: ubuntu-22.04
+          # - postgres: 13
+            # os: ubuntu-20.04
     steps:
       - uses: actions/checkout@v4
       - run: sudo apt-get update && sudo apt-get install -y libcurl4-openssl-dev
-      - uses: ankane/setup-postgres@v1
+      # set $USER to the current user
+      - uses: oscarlaird/setup-postgres@v2
         with:
           postgres-version: ${{ matrix.postgres }}
           dev-files: true
+      - if: ${{ failure() }}
+          # cat the hba file to see what's going on
+        run: sudo cat /etc/postgresql/${{ matrix.postgres }}/main/pg_hba.conf
       - run: make
         env:
           PG_CFLAGS: -Wall -Wextra -Werror -Wno-unused-parameter -Wno-sign-compare
