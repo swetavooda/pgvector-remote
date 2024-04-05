@@ -1,7 +1,7 @@
 # pgvector-remote
 
 pgvector-remote is a fork of pgvector which combines the simplicity of [pgvector](https://github.com/pgvector/pgvector)
-with the power of remote vector databases, by introducing a new remote vector index type. Currently, pgvector-remote only supports [Pinecone]("https://www.pinecone.io/")
+with the power of remote vector databases, by introducing a new remote vector index type. Currently, pgvector-remote only supports [pinecone]("https://www.pinecone.io/")
 , but we plan to support other vendors in the future.
 - [Short Version](#short-version)
 - [Use Cases](#use-cases)
@@ -35,7 +35,7 @@ SELECT * FROM products WHERE price < 40.0 ORDER BY embedding <-> '[...]' LIMIT 1
 - **Seamless integration**: You don't need to write a line of pinecone application logic. Use a unified sql interface to leverage pinecone as if it were any other postgres index type.
 - **Synchronization**: pgvector-remote ensures that the data in pinecone and postgres are always in sync. For example, if your postgres transaction rolls back you don't need to worry about cleaning up the data in pinecone.
 
-### Why is this integration better than confluent's kafka-connect?
+### Why is this integration better than [confluent's kafka-connect](https://www.pinecone.io/confluent-integration/)?
 - **Liveness and correctness**: pgvector-remote sends inserted vectors to pinecone in batches and locally scans unflushed records, guaranteeing that all data is always visible to index queries.
 - **Query and integration logic**: traditional ETL won't help you write queries like the one above. pgvector-remote translates select predicates to pinecone filters.
 
