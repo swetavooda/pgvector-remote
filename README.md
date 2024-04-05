@@ -1,306 +1,100 @@
 # pgvector-remote
 
-pgvector-remote is a PostgreSQL extension developed by the Georgia Tech Database Labs. It builds upon the functionality provided by pgvector, introducing seamless integration with dedicated remote vector stores like Pinecone, with plans to support other vendors in the future.
+pgvector-remote is a fork of pgvector which combines the simplicity of [pgvector](https://github.com/pgvector/pgvector)
+with the power of remote vector databases, by introducing a new remote vector index type. Currently, pgvector-remote only supports [Pinecone]("https://www.pinecone.io/")
+, but we plan to support other vendors in the future.
+- [Short Version](#short-version)
+- [Use Cases](#use-cases)
+- [Installation](#installation)
+- [Configuration](#configuration)
+- [Index Creation](#index-creation)
+- [Performance Considerations](#performance-considerations)
+- [Docker](#docker)
+- [Credits](#credits)
 
-This extension simplifies the process of storing and retrieving vectors while leveraging the power and familiarity of PostgreSQL, along with the rich functionality and performance of serverless vector stores.
+## Short Version
 
-Supports:
-- exact and approximate nearest neighbor search
-- metadata filtering with vector similarity search
-- L2 distance, inner product, and cosine distance metrics
-- buffering and batch-insertion of vectors into remote stores per user-defined sizes
-- seamless data integration and synchronization between pgvector and Pinecone 
+```sql
+CREATE TABLE products (name text, embedding vector(1536), price float);
+CREATE INDEX my_remote_index ON products USING pinecone (embedding, price) with (host = 'my-pinecone-index.pinecone.io');
+-- [insert, update, and delete billions of records in products]
+SELECT * FROM products WHERE price < 40.0 ORDER BY embedding <-> '[...]' LIMIT 10; -- pinecone performs this query, including the price predicate
+
+```
+
+## Use Cases
+### Benefits of using pgvector-remote for pinecone users
+
+- Vector databases like pinecone aren't docstores (and they shouldn't try to be). That means your document and its embedding live in separate databases. pgvector-remote lets you keep your metadata in postgres and your embeddings in pinecone, while hiding this complexity from the user by presenting a unified sql interface to creating, querying, and updating pinecone indexes.
+- Control your data. Using pgvector-remote means that all your vectors are in postgres. This makes it easy to test out a different index type (like hnsw) and drop pinecone in favor of a different vendor.
+
+### Benefits of using pinecone for pgvector users
+- **Scalability**: Pinecone is designed to scale to billions of vectors. pgvector cannot accomodate does not easily accomodate such large datasets. Large vector indexes are incredibly highly memory intensive and therefore it makes sense to separate this from the main database. For example indexing 200M vectors of 1536 dimensions would require 1.2TB of memory.
+
+### Benefits of using pgvector-remote for users who already use pinecone and pgvector
+- **Seamless integration**: You don't need to write a line of pinecone application logic. Use a unified sql interface to leverage pinecone as if it were any other postgres index type.
+- **Synchronization**: pgvector-remote ensures that the data in pinecone and postgres are always in sync. For example, if your postgres transaction rolls back you don't need to worry about cleaning up the data in pinecone.
+
+### Why is this integration better than confluent's kafka-connect?
+- **Liveness and correctness**: pgvector-remote sends inserted vectors to pinecone in batches and locally scans unflushed records, guaranteeing that all data is always visible to index queries.
+- **Query and integration logic**: traditional ETL won't help you write queries like the one above. pgvector-remote translates select predicates to pinecone filters.
+
+### When should I just use pgvector?
+- **Small datasets**: If you have a small to medium dataset (10M vectors at 768 dimensions), you can use pgvector without a remote vector store. The local hnsw indexes will be sufficient.
+- **Minimal metadata**: You aren't performing metadata filtering. Currently, pgvector does not handle metadata filtering, meaning that queries like the one above can sometimes be inefficient and inaccurate.
 
 ## Installation
 
-### Linux and Mac
-
-Compile and install the extension (supports Postgres 12+)
-
+Install libcurl headers. For example,
 ```sh
-cd /tmp
-git clone --branch feature/remote_indexes https://github.com/georgia-tech-db/pgvector-remote.git
-cd pgvector-remote
-make
-make install # may need sudo
+sudo apt-get install libcurl4-openssl-dev
 ```
 
-See the [installation notes](#installation-notes) if you run into issues
+Then follow the [installation instructions for pgvector](https://github.com/pgvector/pgvector?tab=readme-ov-file#installation-notes---linux-and-mac), using the `feature/remote_indexes` of this repository.
 
-You can also install it with [Docker](#docker)
+## Configuration
 
-### Windows
-
-Ensure [C++ support in Visual Studio](https://learn.microsoft.com/en-us/cpp/build/building-on-the-command-line?view=msvc-170#download-and-install-the-tools) is installed, and run:
-
-```cmd
-call "C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Auxiliary\Build\vcvars64.bat"
-```
-
-Note: The exact path will vary depending on your Visual Studio version and edition
-
-Then use `nmake` to build:
-
-```cmd
-set "PGROOT=C:\Program Files\PostgreSQL\16"
-git clone --branch feature/remote_indexes https://github.com/georgia-tech-db/pgvector-remote.git
-cd pgvector-remote
-nmake /F Makefile.win
-nmake /F Makefile.win install
-```
-
-You can also install it with [Docker](#docker)
-
-## Getting Started
-
-Enable the extension (do this once in each database where you want to use it)
-
-```tsql
-CREATE EXTENSION vector;
-```
-
-Create a vector column with 3 dimensions
-
+Set the pinecone API key in the postgres configuration. For example,
 ```sql
-CREATE TABLE items (id bigserial PRIMARY KEY, embedding vector(3));
+ALTER DATABASE mydb SET pinecone.api_key = 'xxxxxxxx-xxxx-xxxx-xxxx–xxxxxxxxxxxx';
 ```
 
-Insert vectors
+## Index Creation
 
+There are two ways to specify the pinecone index:
+- By providing the host of an existing pinecone index. For example,
 ```sql
-INSERT INTO items (embedding) VALUES ('[1,2,3]'), ('[4,5,6]');
+CREATE INDEX my_remote_index ON products USING pinecone (embedding) with (host = 'example-23kshha.svc.us-east-1-aws.pinecone.io');
 ```
-
-Get the nearest neighbors by L2 distance
-
+- By specifying the `spec` of the pinecone index. For example,
 ```sql
-SELECT * FROM items ORDER BY embedding <-> '[3,1,2]' LIMIT 5;
+CREATE INDEX my_remote_index ON products USING pinecone (embedding) with (spec = '"spec": {
+        "serverless": {
+            "region": "us-west-2",
+            "cloud": "aws"
+        }
+    }');
 ```
+All spec options can be found [here](https://docs.pinecone.io/reference/api/control-plane/create_index)
 
-Also supports inner product (`<#>`) and cosine distance (`<=>`)
+## Performance Considerations
 
-Note: `<#>` returns the negative inner product since Postgres only supports `ASC` order index scans on operators
-
-## Storing
-
-Create a new table with a vector column
-
+- Place your pinecone index in the same region as your postgres instance to minimize latency.
+- Make use of connection pooling to run queries in postgres concurrently. For example, use `asyncpg` in python.
+- Records are sent to the remote index in batches. Therefore pgvector-remote performs a local scan of the unflushed records before every query. To disable this set `pinecone.max_buffer_scan` to 0. For example,
 ```sql
-CREATE TABLE items (id bigserial PRIMARY KEY, embedding vector(3));
+ALTER DATABASE mydb SET pinecone.max_buffer_scan = 0;
 ```
-
-Or add a vector column to an existing table
-
+- You can adjust the number of vectors sent in each request and the number of concurrent requests per batch using `pinecone.vectors_per_request` and `pinecone.requests_per_batch` respectively. For example,
 ```sql
-ALTER TABLE items ADD COLUMN embedding vector(3);
+ALTER DATABASE mydb SET pinecone.vectors_per_request = 100; --default
+ALTER DATABASE mydb SET pinecone.requests_per_batch = 40; --default
 ```
+- You can control the number of results returned by pinecone using `pinecone.top_k`. Lowering this parameter can decrease latencies, but keep in mind that setting this too low could cause fewer results to be returned than expected.
 
-Insert vectors
+## Docker
 
-```sql
-INSERT INTO items (embedding) VALUES ('[1,2,3]'), ('[4,5,6]');
-```
-
-Upsert vectors
-
-```sql
-INSERT INTO items (id, embedding) VALUES (1, '[1,2,3]'), (2, '[4,5,6]')
-    ON CONFLICT (id) DO UPDATE SET embedding = EXCLUDED.embedding;
-```
-
-Update vectors
-
-```sql
-UPDATE items SET embedding = '[1,2,3]' WHERE id = 1;
-```
-
-Delete vectors
-
-```sql
-DELETE FROM items WHERE id = 1;
-```
-
-## Indexing
-
-pgvector-remote utilizes Pinecone to create a remote index from vectors stored in PostgreSQL for vector similarity search. To enable metadata filtering alongside vector similarity search, additional metadata must be passed when creating the index.
-
-Add pinecone api key as a system configuration value
-
-```sql
-ALTER SYSTEM SET pinecone.api_key = 'xxxxxxxx-xxxx-xxxx-xxxx–xxxxxxxxxxxx';
-```
-
-Add an index for each distance function you want to use.
-
-L2 distance
-
-```sql
-CREATE INDEX ON items USING pinecone (embedding vector_l2_ops) with (spec = '{"serverless":{"cloud":"aws","region":"us-west-2"}}');
-```
-
-Metadata along with vector embedding
-
-```sql
-CREATE INDEX ON items USING pinecone (embedding vector_l2_ops, price, quantity) with (spec = '{"serverless":{"cloud":"aws","region":"us-west-2"}}');
-```
-Here price and quantity are other columns present in postgresql which you want to use as a filter while performing vector similarity search.
-
-Inner product
-
-```sql
-CREATE INDEX ON items USING pinecone (embedding vector_ip_ops) with (spec = '{"serverless":{"cloud":"aws","region":"us-west-2"}}');
-```
-
-Cosine distance
-
-```sql
-CREATE INDEX ON items USING pinecone (embedding vector_cosine_ops) with (spec = '{"serverless":{"cloud":"aws","region":"us-west-2"}}');
-```
-
-## Querying
-
-Get the nearest neighbors to a vector
-
-```sql
-SELECT * FROM items ORDER BY embedding <-> '[3,1,2]' LIMIT 5;
-```
-
-Get the nearest neighbors to a row
-
-```sql
-SELECT * FROM items WHERE id != 1 ORDER BY embedding <-> (SELECT embedding FROM items WHERE id = 1) LIMIT 5;
-```
-
-Get rows within a certain distance
-
-```sql
-SELECT * FROM items WHERE embedding <-> '[3,1,2]' < 5;
-```
-
-Note: Combine with `ORDER BY` and `LIMIT` to use an index
-
-#### Distances
-
-Get the distance
-
-```sql
-SELECT embedding <-> '[3,1,2]' AS distance FROM items;
-```
-
-For inner product, multiply by -1 (since `<#>` returns the negative inner product)
-
-```tsql
-SELECT (embedding <#> '[3,1,2]') * -1 AS inner_product FROM items;
-```
-
-For cosine similarity, use 1 - cosine distance
-
-```sql
-SELECT 1 - (embedding <=> '[3,1,2]') AS cosine_similarity FROM items;
-```
-
-#### Aggregates
-
-Average vectors
-
-```sql
-SELECT AVG(embedding) FROM items;
-```
-
-Average groups of vectors
-
-```sql
-SELECT category_id, AVG(embedding) FROM items GROUP BY category_id;
-```
-
-### Query Options
-
-* **pinecone.top_k:** Get the top K relevant results from pinecone.  
-* **pinecone.vectors_per_request:** Number of vectors per request.  
-* **pinecone.requests_per_batch:** Number of requests to be sent in one batch.  
-* The buffer size is calculated as ***pinecone.vectors_per_request * pinecone.requests_per_batch***  
-* **pinecone.max_buffer_scan:** Pinecone max buffer search  
-
-## Reference
-
-### Vector Type
-
-Each vector takes `4 * dimensions + 8` bytes of storage. Each element is a single precision floating-point number (like the `real` type in Postgres), and all elements must be finite (no `NaN`, `Infinity` or `-Infinity`). Vectors can have up to 16,000 dimensions.
-
-### Vector Operators
-
-Operator | Description | Added
---- | --- | ---
-\+ | element-wise addition |
-\- | element-wise subtraction |
-\* | element-wise multiplication | 0.5.0
-<-> | Euclidean distance |
-<#> | negative inner product |
-<=> | cosine distance |
-
-### Vector Functions
-
-Function | Description | Added
---- | --- | ---
-cosine_distance(vector, vector) → double precision | cosine distance |
-inner_product(vector, vector) → double precision | inner product |
-l2_distance(vector, vector) → double precision | Euclidean distance |
-l1_distance(vector, vector) → double precision | taxicab distance | 0.5.0
-vector_dims(vector) → integer | number of dimensions |
-vector_norm(vector) → double precision | Euclidean norm |
-
-### Aggregate Functions
-
-Function | Description | Added
---- | --- | ---
-avg(vector) → vector | average |
-sum(vector) → vector | sum | 0.5.0
-
-## Installation Notes
-
-### Postgres Location
-
-If your machine has multiple Postgres installations, specify the path to [pg_config](https://www.postgresql.org/docs/current/app-pgconfig.html) with:
-
-```sh
-export PG_CONFIG=/Library/PostgreSQL/16/bin/pg_config
-```
-
-Then re-run the installation instructions (run `make clean` before `make` if needed). If `sudo` is needed for `make install`, use:
-
-```sh
-sudo --preserve-env=PG_CONFIG make install
-```
-
-A few common paths on Mac are:
-
-- EDB installer - `/Library/PostgreSQL/16/bin/pg_config`
-- Homebrew (arm64) - `/opt/homebrew/opt/postgresql@16/bin/pg_config`
-- Homebrew (x86-64) - `/usr/local/opt/postgresql@16/bin/pg_config`
-
-Note: Replace `16` with your Postgres server version
-
-### Missing Header
-
-If compilation fails with `fatal error: postgres.h: No such file or directory`, make sure Postgres development files are installed on the server.
-
-For Ubuntu and Debian, use:
-
-```sh
-sudo apt install postgresql-server-dev-16
-```
-
-Note: Replace `16` with your Postgres server version
-
-### Missing SDK
-
-If compilation fails and the output includes `warning: no such sysroot directory` on Mac, reinstall Xcode Command Line Tools.
-
-## Additional Installation Methods
-
-### Docker
-
-Get the [Docker image] with:
+An example docker image can be obtained with,
 
 ```sh
 docker pull kslohith17/pgvector-remote:latest
@@ -320,7 +114,3 @@ We give special thanks to these projects, which enabled us to develop our extens
 - [Concept Decompositions for Large Sparse Text Data using Clustering](https://www.cs.utexas.edu/users/inderjit/public_papers/concept_mlj.pdf)
 - [Efficient and Robust Approximate Nearest Neighbor Search using Hierarchical Navigable Small World Graphs](https://arxiv.org/ftp/arxiv/papers/1603/1603.09320.pdf)
 - [Pinecone: Vector database and search service designed for real-time applications](https://docs.pinecone.io/introduction)
-
-## Contributing
-
-Coming soon
