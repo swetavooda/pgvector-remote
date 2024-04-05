@@ -29,7 +29,7 @@ SELECT * FROM products WHERE price < 40.0 ORDER BY embedding <-> '[...]' LIMIT 1
 - Control your data. Using pgvector-remote means that all your vectors are in postgres. This makes it easy to test out a different index type (like hnsw) and drop pinecone in favor of a different vendor.
 
 ### Benefits of using pinecone for pgvector users
-- **Scalability**: Pinecone is designed to scale to billions of vectors. pgvector cannot accomodate does not easily accomodate such large datasets. Large vector indexes are incredibly highly memory intensive and therefore it makes sense to separate this from the main database. For example indexing 200M vectors of 1536 dimensions would require 1.2TB of memory.
+- **Scalability**: Pinecone is designed to scale to billions of vectors. pgvector does not easily accomodate such large datasets. Large vector indexes are incredibly highly memory intensive and therefore it makes sense to separate this from the main database. For example indexing 200M vectors of 1536 dimensions would require 1.2TB of memory.
 
 ### Benefits of using pgvector-remote for users who already use pinecone and pgvector
 - **Seamless integration**: You don't need to write a line of pinecone application logic. Use a unified sql interface to leverage pinecone as if it were any other postgres index type.
