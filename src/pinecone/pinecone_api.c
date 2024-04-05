@@ -245,8 +245,10 @@ cJSON** pinecone_query_with_fetch(const char *api_key, const char *index_host, c
         }
         curl_multi_perform(multi_hnd_for_query, &running);
     }
+    curl_multi_remove_handle(multi_hnd_for_query, query_handle);
     curl_easy_reset(query_handle);
     if (with_fetch) {
+        curl_multi_remove_handle(multi_hnd_for_query, fetch_handle);
         curl_easy_reset(fetch_handle);
     }
     // TODO: figure out exactly what is necessary: deleting multi_cleanup or reusing the same multihandle
