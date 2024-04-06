@@ -157,11 +157,16 @@ bool AppendBufferTupleInCtx(Relation index, Datum *values, bool *isnull, ItemPoi
     MemoryContext oldCtx;
     MemoryContext insertCtx;
     bool checkpoint_created;
+    Vector* vector;
     // use a memory context because index_form_tuple can allocate 
     insertCtx = AllocSetContextCreate(CurrentMemoryContext,
                                       "Remote insert tuple temporary context",
                                       ALLOCSET_DEFAULT_SIZES);
     oldCtx = MemoryContextSwitchTo(insertCtx);
+
+    vector = DatumGetVector(values[0]);
+    validate_vector_nonzero(vector);
+    
     checkpoint_created = AppendBufferTuple(index, values, isnull, heap_tid, heapRel);
     MemoryContextSwitchTo(oldCtx);
     MemoryContextDelete(insertCtx); // delete the temporary context
