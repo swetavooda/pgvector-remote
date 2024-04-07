@@ -13,7 +13,7 @@
 char* pinecone_api_key = NULL;
 int pinecone_top_k = 1000;
 int pinecone_vectors_per_request = 100;
-int pinecone_requests_per_batch = 40;
+int pinecone_requests_per_batch = 10;
 int pinecone_max_buffer_scan = 10000; // maximum number of tuples to search in the buffer
 int pinecone_max_fetched_vectors_for_liveness_check = 10;
 #ifdef PINECONE_MOCK
@@ -62,7 +62,7 @@ void PineconeInit(void)
                             0, NULL, NULL, NULL);
     DefineCustomIntVariable("pinecone.requests_per_batch", "Pinecone requests per batch", "Pinecone requests per batch",
                             &pinecone_requests_per_batch,
-                            40, 1, 100,
+                            10, 1, 100,
                             PGC_USERSET,
                             0, NULL, NULL, NULL);
     DefineCustomIntVariable("pinecone.max_buffer_scan", "Pinecone max buffer search", "Pinecone max buffer search",
