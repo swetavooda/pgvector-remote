@@ -52,7 +52,7 @@ jobs:
       - run: psql test -c 'alter database test set enable_seqscan = off'
 
       # setup the database for testing
-      - run: make installcheck REGRESS=pinecone_crud,pinecone_medium_create REGRESS_OPTS="--dbname=test --inputdir=./test --use-existing"
+      - run: make installcheck REGRESS="pinecone_crud pinecone_medium_create" REGRESS_OPTS="--dbname=test --inputdir=./test --use-existing"
       - if: ${{ failure() }}
         run: cat regression.diffs
   # mac:

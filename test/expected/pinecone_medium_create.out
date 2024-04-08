@@ -13,13 +13,11 @@ SET enable_seqscan = off;
 DELETE FROM pinecone_mock;
 -- CREATE TABLE
 DROP TABLE IF EXISTS cities;
+NOTICE:  table "cities" does not exist, skipping
 CREATE TABLE cities (name text, coords vector(3));
 \o
 -- COPY FROM CSV
-copy cities(name, coords)
-from '/home/oscar/cities_coordinates.csv'
-delimiter ','
-csv header;
+\copy cities(name, coords) FROM './test/data/cities_coordinates.csv' WITH CSV HEADER DELIMITER ',';
 -- CREATE INDEX
 -- mock create index
 INSERT INTO pinecone_mock (url_prefix, method, response)
@@ -63,3 +61,4 @@ SELECT name,coords<->'[0,0,1]' as dist FROM cities ORDER BY coords <-> '[0, 0, 1
  Montreal | 0.7572697534412217
 (5 rows)
 
+DROP TABLE cities;

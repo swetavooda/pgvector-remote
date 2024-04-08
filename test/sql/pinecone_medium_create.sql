@@ -19,10 +19,7 @@ CREATE TABLE cities (name text, coords vector(3));
 \o
 
 -- COPY FROM CSV
-copy cities(name, coords)
-from '/home/oscar/cities_coordinates.csv'
-delimiter ','
-csv header;
+\copy cities(name, coords) FROM './test/data/cities_coordinates.csv' WITH CSV HEADER DELIMITER ',';
 
 -- CREATE INDEX
 -- mock create index
@@ -59,3 +56,5 @@ VALUES ('https://fakehost/query', 'POST', '{"results":[],"matches":[{"id":"00000
 INSERT INTO pinecone_mock (url_prefix, method, response)
 VALUES ('https://fakehost/vectors/fetch', 'GET', '{"code": 3, "message": "No IDs provided for fetch query", "details": [] }');
 SELECT name,coords<->'[0,0,1]' as dist FROM cities ORDER BY coords <-> '[0, 0, 1]' limit 5;
+
+DROP TABLE cities;
