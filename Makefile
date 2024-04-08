@@ -1,5 +1,5 @@
 EXTENSION = vector
-EXTVERSION = 0.6.0
+EXTVERSION = remote0.1.0
 
 SHLIB_LINK += -lcurl
 
