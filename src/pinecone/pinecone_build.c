@@ -91,7 +91,15 @@ IndexBuildResult *pinecone_build(Relation heap, Relation index, IndexInfo *index
         result->heap_tuples = 0;
         result->index_tuples = 0;
     } else {
+        cJSON* index_stats_response;
         InsertBaseTable(heap, index, indexInfo, host, result);
+        // wait for the remote index to finish processing the vectors
+        // i.e. describe stats is equal to result->index_tuples
+        index_stats_response = pinecone_get_index_stats(pinecone_api_key, host);
+        while (cJSON_GetObjectItemCaseSensitive(index_stats_response, "totalVectorCount")->valueint < result->index_tuples) {
+            sleep(1);
+            index_stats_response = pinecone_get_index_stats(pinecone_api_key, host);
+        }
     }
     return result;
 }
