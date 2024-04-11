@@ -1,5 +1,5 @@
-#include "pinecone_api.h"
-#include "pinecone.h"
+#include "remote_api.h"
+#include "remote.h"
 #include "postgres.h"
 
 #include <stdio.h>
@@ -60,7 +60,7 @@ void set_curl_options(CURL *hnd, const char *api_key, const char *url, const cha
 // Declare the CURL handle as a global variable
 CURL *hnd_t;
 
-cJSON* generic_pinecone_request(const char *api_key, const char *url, const char *method, cJSON *body, bool expect_json_response) {
+cJSON* generic_remote_request(const char *api_key, const char *url, const char *method, cJSON *body, bool expect_json_response) {
     // CURL *hnd = curl_easy_init();
     ResponseData response_data = {"", NULL, NULL, 0, ""};
     cJSON *response_json, *error;
@@ -84,15 +84,15 @@ cJSON* generic_pinecone_request(const char *api_key, const char *url, const char
     }
 
     // perform the request
-    #ifdef PINECONE_MOCK
-    if (pinecone_use_mock_response) {
+    #ifdef REMOTE_MOCK
+    if (remote_use_mock_response) {
         lookup_mock_response(hnd_t, &response_data, &ret);
         elog(DEBUG1, "Mock response: %s", response_data.data);
         elog(DEBUG1, "Mock response ret: %d", ret);
     } else {
     #endif
     ret = curl_easy_perform(hnd_t);
-    #ifdef PINECONE_MOCK
+    #ifdef REMOTE_MOCK
     }
     #endif
 
@@ -113,84 +113,84 @@ cJSON* generic_pinecone_request(const char *api_key, const char *url, const char
     response_json = cJSON_Parse(response_data.data);
 
     if (response_json == NULL) {
-        elog(ERROR, "Failed to parse response from Pinecone API. Response: %s", response_data.data);
+        elog(ERROR, "Failed to parse response from Remote API. Response: %s", response_data.data);
     }
     // report if json has an error field
     error = cJSON_GetObjectItemCaseSensitive(response_json, "error");
     if (error != NULL) {
-        elog(ERROR, "Pinecone API returned an error: %s", cJSON_Print(error));
+        elog(ERROR, "Remote API returned an error: %s", cJSON_Print(error));
     }
     return response_json;
 }
 
 /*
  * returns a json object with the index's metadata
- * https://docs.pinecone.io/reference/describe_index
+ * https://docs.remote.io/reference/describe_index
  */
 cJSON* describe_index(const char *api_key, const char *index_name) {
-    char url[100] = "https://api.pinecone.io/indexes/"; strcat(url, index_name);
-    return generic_pinecone_request(api_key, url, "GET", NULL, true);
+    char url[100] = "https://api.remote.io/indexes/"; strcat(url, index_name);
+    return generic_remote_request(api_key, url, "GET", NULL, true);
 }
 
-cJSON* pinecone_get_index_stats(const char *api_key, const char *index_host) {
+cJSON* remote_get_index_stats(const char *api_key, const char *index_host) {
     cJSON* resp;
     char url[100] = "https://"; strcat(url, index_host); strcat(url, "/describe_index_stats");
-    resp = generic_pinecone_request(api_key, url, "GET", NULL, true);
+    resp = generic_remote_request(api_key, url, "GET", NULL, true);
     return resp;
 }
 
 cJSON* list_indexes(const char *api_key) {
     cJSON* response_json;
-    response_json = generic_pinecone_request(api_key, "https://api.pinecone.io/indexes", "GET", NULL, true);
+    response_json = generic_remote_request(api_key, "https://api.remote.io/indexes", "GET", NULL, true);
     return cJSON_GetObjectItemCaseSensitive(response_json, "indexes");
 }
 
-cJSON* pinecone_delete_vectors(const char *api_key, const char *index_host, cJSON *ids) {
+cJSON* remote_delete_vectors(const char *api_key, const char *index_host, cJSON *ids) {
     cJSON *request = cJSON_CreateObject();
     char url[300];
     sprintf(url, "https://%s/vectors/delete", index_host);
     cJSON_AddItemToObject(request, "ids", ids);
-    return generic_pinecone_request(api_key, url, "POST", request, true);
+    return generic_remote_request(api_key, url, "POST", request, true);
 }
 
-cJSON* pinecone_delete_index(const char *api_key, const char *index_name) {
-    char url[100] = "https://api.pinecone.io/indexes/"; strcat(url, index_name);
-    return generic_pinecone_request(api_key, url, "DELETE", NULL, false);
+cJSON* remote_delete_index(const char *api_key, const char *index_name) {
+    char url[100] = "https://api.remote.io/indexes/"; strcat(url, index_name);
+    return generic_remote_request(api_key, url, "DELETE", NULL, false);
 }
 
 // delete all vectors in an index
-cJSON* pinecone_delete_all(const char *api_key, const char *index_host) {
+cJSON* remote_delete_all(const char *api_key, const char *index_host) {
     char url[300];
     sprintf(url, "https://%s/vectors/delete", index_host);
-    return generic_pinecone_request(api_key, url, "POST", cJSON_Parse("{\"deleteAll\": true}"), true);
+    return generic_remote_request(api_key, url, "POST", cJSON_Parse("{\"deleteAll\": true}"), true);
 }
 
-cJSON* pinecone_list_vectors(const char *api_key, const char *index_host, int limit, char* pagination_token) {
+cJSON* remote_list_vectors(const char *api_key, const char *index_host, int limit, char* pagination_token) {
     char url[300];
     if (pagination_token != NULL) {
         sprintf(url, "https://%s/vectors/list?limit=%d&paginationToken=%s", index_host, limit, pagination_token);
     } else {
         sprintf(url, "https://%s/vectors/list?limit=%d", index_host, limit);
     }
-    return cJSON_GetObjectItem(generic_pinecone_request(api_key, url, "GET", NULL, true), "vectors");
+    return cJSON_GetObjectItem(generic_remote_request(api_key, url, "GET", NULL, true), "vectors");
 }
 
 /* name, dimension, metric
  * serverless: cloud, region
  * pod: environment, replicas, pod_type, pods, shards, metadata_config
- * Refer to https://docs.pinecone.io/reference/create_index
+ * Refer to https://docs.remote.io/reference/create_index
  */
-cJSON* pinecone_create_index(const char *api_key, const char *index_name, const int dimension, const char *metric, cJSON *spec) {
+cJSON* remote_create_index(const char *api_key, const char *index_name, const int dimension, const char *metric, cJSON *spec) {
     cJSON *request = cJSON_CreateObject();
     cJSON_AddItemToObject(request, "name", cJSON_CreateString(index_name));
     cJSON_AddItemToObject(request, "dimension", cJSON_CreateNumber(dimension));
     cJSON_AddItemToObject(request, "metric", cJSON_CreateString(metric));
     cJSON_AddItemToObject(request, "spec", spec);
-    return generic_pinecone_request(api_key, "https://api.pinecone.io/indexes", "POST", request, true);
+    return generic_remote_request(api_key, "https://api.remote.io/indexes", "POST", request, true);
 }
 
 CURL* multi_hnd_for_query;
-cJSON** pinecone_query_with_fetch(const char *api_key, const char *index_host, const int topK, cJSON *query_vector_values, cJSON *filter, bool with_fetch, cJSON* fetch_ids) {
+cJSON** remote_query_with_fetch(const char *api_key, const char *index_host, const int topK, cJSON *query_vector_values, cJSON *filter, bool with_fetch, cJSON* fetch_ids) {
     CURL *query_handle, *fetch_handle;
     cJSON** responses = palloc(2 * sizeof(cJSON*)); // allocate space to return two cJSON* pointers for the query and fetch responses
     ResponseData query_response_data = {"", NULL, NULL, 0, ""};
@@ -207,11 +207,11 @@ cJSON** pinecone_query_with_fetch(const char *api_key, const char *index_host, c
         }
     }
 
-    query_handle = get_pinecone_query_handle(api_key, index_host, topK, query_vector_values, filter, &query_response_data);
+    query_handle = get_remote_query_handle(api_key, index_host, topK, query_vector_values, filter, &query_response_data);
     curl_multi_add_handle(multi_hnd_for_query, query_handle);
 
     if (with_fetch) {
-        fetch_handle = get_pinecone_fetch_handle(api_key, index_host, fetch_ids, &fetch_response_data);
+        fetch_handle = get_remote_fetch_handle(api_key, index_host, fetch_ids, &fetch_response_data);
         curl_multi_add_handle(multi_hnd_for_query, fetch_handle);
     }
 
@@ -219,8 +219,8 @@ cJSON** pinecone_query_with_fetch(const char *api_key, const char *index_host, c
 
 
     // perform the request
-    #ifdef PINECONE_MOCK
-    if (pinecone_use_mock_response) {
+    #ifdef REMOTE_MOCK
+    if (remote_use_mock_response) {
         CURLcode query_ret, fetch_ret;
         lookup_mock_response(query_handle, &query_response_data, &query_ret);
         elog(DEBUG1, "Mock query response: %s", query_response_data.data);
@@ -256,7 +256,7 @@ cJSON** pinecone_query_with_fetch(const char *api_key, const char *index_host, c
     stop = clock();
     elog(DEBUG2, "Query and fetch took %f seconds", (double)(stop - start) / CLOCKS_PER_SEC);
 
-    #ifdef PINECONE_MOCK
+    #ifdef REMOTE_MOCK
     }
     #endif
 
@@ -274,7 +274,7 @@ cJSON** pinecone_query_with_fetch(const char *api_key, const char *index_host, c
 }
 
 CURL* multi_handle;
-cJSON* pinecone_bulk_upsert(const char *api_key, const char *index_host, cJSON *vectors, int batch_size) {
+cJSON* remote_bulk_upsert(const char *api_key, const char *index_host, cJSON *vectors, int batch_size) {
     cJSON *batches = batch_vectors(vectors, batch_size);
     cJSON *batch;
     CURL* batch_handle;
@@ -292,14 +292,14 @@ cJSON* pinecone_bulk_upsert(const char *api_key, const char *index_host, cJSON *
     for (int i = 0; i < n_batches; i++) {
         batch = cJSON_GetArrayItem(batches, i);
         response_data[i] = (ResponseData) {"", NULL, NULL, 0, ""};
-        batch_handle = get_pinecone_upsert_handle(api_key, index_host, cJSON_Duplicate(batch, true), &response_data[i]); // TODO: figure out why i have to deepcopy // because batch goes out of scope
+        batch_handle = get_remote_upsert_handle(api_key, index_host, cJSON_Duplicate(batch, true), &response_data[i]); // TODO: figure out why i have to deepcopy // because batch goes out of scope
         handles[i] = batch_handle;
         curl_multi_add_handle(multi_handle, batch_handle);
     }
     cJSON_Delete(batches);
 
-    #ifdef PINECONE_MOCK
-    if (pinecone_use_mock_response) {
+    #ifdef REMOTE_MOCK
+    if (remote_use_mock_response) {
         for (int i = 0; i < n_batches; i++) {
             CURLcode ret;
             lookup_mock_response(handles[i], &response_data[i], &ret);
@@ -323,7 +323,7 @@ cJSON* pinecone_bulk_upsert(const char *api_key, const char *index_host, cJSON *
     for (int i = 0; i < n_batches; i++) {
         curl_easy_reset(handles[i]);
     }
-    #ifdef PINECONE_MOCK
+    #ifdef REMOTE_MOCK
     }
     #endif
 
@@ -333,10 +333,10 @@ cJSON* pinecone_bulk_upsert(const char *api_key, const char *index_host, cJSON *
 }
 
 CURL* query_handle;
-CURL* get_pinecone_query_handle(const char *api_key, const char *index_host, const int topK, cJSON *query_vector_values, cJSON *filter, ResponseData* response_data) {
+CURL* get_remote_query_handle(const char *api_key, const char *index_host, const int topK, cJSON *query_vector_values, cJSON *filter, ResponseData* response_data) {
     cJSON *body = cJSON_CreateObject();
     char* body_str;
-    char url[100] = "https://"; strcat(url, index_host); strcat(url, "/query"); // e.g. https://t1-23kshha.svc.apw5-4e34-81fa.pinecone.io/query
+    char url[100] = "https://"; strcat(url, index_host); strcat(url, "/query"); // e.g. https://t1-23kshha.svc.apw5-4e34-81fa.remote.io/query
     if (query_handle == NULL) {
         query_handle = curl_easy_init();
         if (query_handle == NULL) {
@@ -360,12 +360,12 @@ CURL* get_pinecone_query_handle(const char *api_key, const char *index_host, con
     return query_handle;
 }
 
-CURL* get_pinecone_upsert_handle(const char *api_key, const char *index_host, cJSON *vectors, ResponseData* response_data) {
+CURL* get_remote_upsert_handle(const char *api_key, const char *index_host, cJSON *vectors, ResponseData* response_data) {
     CURL *hnd = curl_easy_init();
     cJSON *body = cJSON_CreateObject();
     char *body_str;
     // furthermore, we need to be sure to free the memory allocated for response_data.data (by the writeback) after we are done using it
-    char url[100] = "https://"; strcat(url, index_host); strcat(url, "/vectors/upsert"); // https://t1-23kshha.svc.apw5-4e34-81fa.pinecone.io/vectors/upsert
+    char url[100] = "https://"; strcat(url, index_host); strcat(url, "/vectors/upsert"); // https://t1-23kshha.svc.apw5-4e34-81fa.remote.io/vectors/upsert
     cJSON_AddItemToObject(body, "vectors", vectors);
     set_curl_options(hnd, api_key, url, "POST", response_data);
     body_str = cJSON_Print(body);
@@ -378,9 +378,9 @@ CURL* get_pinecone_upsert_handle(const char *api_key, const char *index_host, cJ
 }
 
 CURL* fetch_handle;
-CURL* get_pinecone_fetch_handle(const char *api_key, const char *index_host, cJSON* ids, ResponseData* response_data) {
+CURL* get_remote_fetch_handle(const char *api_key, const char *index_host, cJSON* ids, ResponseData* response_data) {
     char url[2048] = "https://"; // we fetch up to 100 vectors and have 12 chars per vector id + &ids= is 17chars/vec
-    strcat(url, index_host); strcat(url, "/vectors/fetch?"); // https://t1-23kshha.svc.apw5-4e34-81fa.pinecone.io/vectors/upsert
+    strcat(url, index_host); strcat(url, "/vectors/fetch?"); // https://t1-23kshha.svc.apw5-4e34-81fa.remote.io/vectors/upsert
     if (fetch_handle == NULL) {
         fetch_handle = curl_easy_init();
         if (fetch_handle == NULL) {

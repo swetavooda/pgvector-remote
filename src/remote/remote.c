@@ -1,104 +1,104 @@
-#include "pinecone.h"
+#include "remote.h"
 
 #include "utils/guc.h"
 #include <access/reloptions.h>
 
 #include <float.h>  
 
-#include "pinecone/remote.h"
+#include "remote/remote.h"
 
 #if PG_VERSION_NUM < 150000
 #define MarkGUCPrefixReserved(x) EmitWarningsOnPlaceholders(x)
 #endif
 
-char* pinecone_api_key = NULL;
-int pinecone_top_k = 1000;
-int pinecone_vectors_per_request = 100;
-int pinecone_requests_per_batch = 10;
-int pinecone_max_buffer_scan = 10000; // maximum number of tuples to search in the buffer
-int pinecone_max_fetched_vectors_for_liveness_check = 10;
-#ifdef PINECONE_MOCK
-bool pinecone_use_mock_response = false;
+char* remote_api_key = NULL;
+int remote_top_k = 1000;
+int remote_vectors_per_request = 100;
+int remote_requests_per_batch = 10;
+int remote_max_buffer_scan = 10000; // maximum number of tuples to search in the buffer
+int remote_max_fetched_vectors_for_liveness_check = 10;
+#ifdef REMOTE_MOCK
+bool remote_use_mock_response = false;
 #endif
 
 // todo: principled batch sizes. Do we ever want the buffer to be bigger than a multi-insert? Possibly if we want to let the buffer fill up when the remote index is down.
-static relopt_kind pinecone_relopt_kind;
+static relopt_kind remote_relopt_kind;
 
 // we need to make sure that the enum_options don't go out of scope
 relopt_enum_elt_def provider_enum_options[] = {
-    {"pinecone", PINECONE_PROVIDER},
+    {"remote", REMOTE_PROVIDER},
     {"milvus", MILVUS_PROVIDER},
     {NULL, 0}
 };
 
 
-void PineconeInit(void)
+void RemoteInit(void)
 {
     initialize_remote_index_interfaces();
 
-    pinecone_relopt_kind = add_reloption_kind();
+    remote_relopt_kind = add_reloption_kind();
     // N.B. The default values are validated when the extension is created, so we have to provide a valid json default
-    add_string_reloption(pinecone_relopt_kind, "spec",
-                            "Specification of the Pinecone Index. Refer to https://docs.pinecone.io/reference/create_index",
+    add_string_reloption(remote_relopt_kind, "spec",
+                            "Specification of the Remote Index. Refer to https://docs.remote.io/reference/create_index",
                             DEFAULT_SPEC,
                             NULL,
                             AccessExclusiveLock);
-    add_enum_reloption(pinecone_relopt_kind, "provider",
-                            "Pinecone provider. Currently only 'pinecone' is supported",
+    add_enum_reloption(remote_relopt_kind, "provider",
+                            "Remote provider. Currently only 'remote' is supported",
                             provider_enum_options,
-                            PINECONE_PROVIDER,
+                            REMOTE_PROVIDER,
                             "detail msg",
                             AccessExclusiveLock);
-    add_string_reloption(pinecone_relopt_kind, "host",
-                            "Host of the Pinecone Index. Cannot be used with spec",
+    add_string_reloption(remote_relopt_kind, "host",
+                            "Host of the Remote Index. Cannot be used with spec",
                             DEFAULT_HOST,
                             NULL,
                             AccessExclusiveLock);
-    add_bool_reloption(pinecone_relopt_kind, "overwrite",
+    add_bool_reloption(remote_relopt_kind, "overwrite",
                             "Delete all vectors in existing index. Host must be specified",
                             false, AccessExclusiveLock);
-    add_bool_reloption(pinecone_relopt_kind, "skip_build",
+    add_bool_reloption(remote_relopt_kind, "skip_build",
                             "Do not upload vectors from the base table.",
                             false, AccessExclusiveLock);
     // todo: allow for specifying a hostname instead of asking to create it
     // todo: you can have a relopts_validator which validates the whole relopt set. This could be used to check that exactly one of spec or host is set
-    DefineCustomStringVariable("pinecone.api_key", "Pinecone API key", "Pinecone API key",
-                              &pinecone_api_key, "", 
+    DefineCustomStringVariable("remote.api_key", "Remote API key", "Remote API key",
+                              &remote_api_key, "", 
                               PGC_USERSET, // restrict to superusers, takes immediate effect and is not saved in the configuration file 
                               0, NULL, NULL, NULL); // todo: you can have a check_hook that checks that the api key is valid.
-    DefineCustomIntVariable("pinecone.top_k", "Pinecone top k", "Pinecone top k",
-                            &pinecone_top_k,
+    DefineCustomIntVariable("remote.top_k", "Remote top k", "Remote top k",
+                            &remote_top_k,
                             500, 1, 10000,
                             PGC_USERSET,
                             0, NULL, NULL, NULL);
-    DefineCustomIntVariable("pinecone.vectors_per_request", "Pinecone vectors per request", "Pinecone vectors per request",
-                            &pinecone_vectors_per_request,
+    DefineCustomIntVariable("remote.vectors_per_request", "Remote vectors per request", "Remote vectors per request",
+                            &remote_vectors_per_request,
                             100, 1, 1000,
                             PGC_USERSET,
                             0, NULL, NULL, NULL);
-    DefineCustomIntVariable("pinecone.requests_per_batch", "Pinecone requests per batch", "Pinecone requests per batch",
-                            &pinecone_requests_per_batch,
+    DefineCustomIntVariable("remote.requests_per_batch", "Remote requests per batch", "Remote requests per batch",
+                            &remote_requests_per_batch,
                             10, 1, 100,
                             PGC_USERSET,
                             0, NULL, NULL, NULL);
-    DefineCustomIntVariable("pinecone.max_buffer_scan", "Pinecone max buffer search", "Pinecone max buffer search",
-                            &pinecone_max_buffer_scan,
+    DefineCustomIntVariable("remote.max_buffer_scan", "Remote max buffer search", "Remote max buffer search",
+                            &remote_max_buffer_scan,
                             10000, 0, 100000,
                             PGC_USERSET,
                             0, NULL, NULL, NULL);
-    DefineCustomIntVariable("pinecone.max_fetched_vectors_for_liveness_check", "Pinecone max fetched vectors for liveness check", "Pinecone max fetched vectors for liveness check",
-                            &pinecone_max_fetched_vectors_for_liveness_check,
+    DefineCustomIntVariable("remote.max_fetched_vectors_for_liveness_check", "Remote max fetched vectors for liveness check", "Remote max fetched vectors for liveness check",
+                            &remote_max_fetched_vectors_for_liveness_check,
                             10, 0, 100, // more than 100 is useless and won't fit in the 2048 chars allotted for the URL
                             PGC_USERSET,
                             0, NULL, NULL, NULL);
-    #ifdef PINECONE_MOCK
-    DefineCustomBoolVariable("pinecone.use_mock_response", "Pinecone use mock response", "Pinecone use mock response",
-                            &pinecone_use_mock_response,
+    #ifdef REMOTE_MOCK
+    DefineCustomBoolVariable("remote.use_mock_response", "Remote use mock response", "Remote use mock response",
+                            &remote_use_mock_response,
                             false,
                             PGC_USERSET,
                             0, NULL, NULL, NULL);
     #endif
-    MarkGUCPrefixReserved("pinecone");
+    MarkGUCPrefixReserved("remote");
 }
 
 void no_costestimate(PlannerInfo *root, IndexPath *path, double loop_count,
@@ -108,27 +108,27 @@ void no_costestimate(PlannerInfo *root, IndexPath *path, double loop_count,
 {
     // todo: consider running a health check on the remote index and return infinity if it is not healthy
     if (list_length(path->indexorderbycols) == 0 || linitial_int(path->indexorderbycols) != 0) {
-        elog(DEBUG1, "Pinecone index must be ordered by distance. Returning infinity.");
+        elog(DEBUG1, "Remote index must be ordered by distance. Returning infinity.");
         *indexTotalCost = DBL_MAX;
         return;
     }
 };
 
-bytea * pinecone_options(Datum reloptions, bool validate)
+bytea * remote_options(Datum reloptions, bool validate)
 {
 	static const relopt_parse_elt tab[] = {
-		{"spec", RELOPT_TYPE_STRING, offsetof(PineconeOptions, spec)},
-		{"provider", RELOPT_TYPE_ENUM, offsetof(PineconeOptions, provider)},
-        {"host", RELOPT_TYPE_STRING, offsetof(PineconeOptions, host)},
-        {"overwrite", RELOPT_TYPE_BOOL, offsetof(PineconeOptions, overwrite)},
-        {"skip_build", RELOPT_TYPE_BOOL, offsetof(PineconeOptions, skip_build)}
+		{"spec", RELOPT_TYPE_STRING, offsetof(RemoteOptions, spec)},
+		{"provider", RELOPT_TYPE_ENUM, offsetof(RemoteOptions, provider)},
+        {"host", RELOPT_TYPE_STRING, offsetof(RemoteOptions, host)},
+        {"overwrite", RELOPT_TYPE_BOOL, offsetof(RemoteOptions, overwrite)},
+        {"skip_build", RELOPT_TYPE_BOOL, offsetof(RemoteOptions, skip_build)}
 
 	};
     static bool first_time = true;
     bool spec_set, host_set, exactly_one;
-    PineconeOptions* opts = (PineconeOptions *) build_reloptions(reloptions, validate,
-                                      pinecone_relopt_kind,
-                                      sizeof(PineconeOptions),
+    RemoteOptions* opts = (RemoteOptions *) build_reloptions(reloptions, validate,
+                                      remote_relopt_kind,
+                                      sizeof(RemoteOptions),
                                       tab, lengthof(tab));
     // if this is the first call, we don't want to validate the default values
     if (first_time) {
@@ -154,8 +154,8 @@ bytea * pinecone_options(Datum reloptions, bool validate)
  *
  * See https://www.postgresql.org/docs/current/index-api.html
  */
-PGDLLEXPORT PG_FUNCTION_INFO_V1(pineconehandler);
-Datum pineconehandler(PG_FUNCTION_ARGS)
+PGDLLEXPORT PG_FUNCTION_INFO_V1(remotehandler);
+Datum remotehandler(PG_FUNCTION_ARGS)
 {
     IndexAmRoutine *amroutine = makeNode(IndexAmRoutine);
 
@@ -168,7 +168,7 @@ Datum pineconehandler(PG_FUNCTION_ARGS)
     amroutine->amcanorderbyop = true;
     amroutine->amcanbackward = false; /* can change direction mid-scan */
     amroutine->amcanunique = false;
-    amroutine->amcanmulticol = true; /* TODO: pinecone can support filtered search */
+    amroutine->amcanmulticol = true; /* TODO: remote can support filtered search */
     amroutine->amoptionalkey = true;
     amroutine->amsearcharray = false;
     amroutine->amsearchnulls = false;
@@ -184,25 +184,25 @@ Datum pineconehandler(PG_FUNCTION_ARGS)
     amroutine->amkeytype = InvalidOid;
 
     /* Interface functions */
-    amroutine->ambuild = pinecone_build;
-    amroutine->ambuildempty = pinecone_buildempty;
-    amroutine->aminsert = pinecone_insert;
-    amroutine->ambulkdelete = pinecone_bulkdelete;
+    amroutine->ambuild = remote_build;
+    amroutine->ambuildempty = remote_buildempty;
+    amroutine->aminsert = remote_insert;
+    amroutine->ambulkdelete = remote_bulkdelete;
     amroutine->amvacuumcleanup = no_vacuumcleanup;
     // used to indicate if we support index-only scans; takes a attno and returns a bool;
     // included cols should always return true since there is little point in an included column if it can't be returned
     amroutine->amcanreturn = NULL; // do we support index-only scans?
     amroutine->amcostestimate = no_costestimate;
-    amroutine->amoptions = pinecone_options;
+    amroutine->amoptions = remote_options;
     amroutine->amproperty = NULL;            /* TODO AMPROP_DISTANCE_ORDERABLE */
     amroutine->ambuildphasename = NULL;      // maps build phase number to name
     amroutine->amvalidate = no_validate; // check that the operator class is valid (provide the opclass's object id)
 #if PG_VERSION_NUM >= 140000
     amroutine->amadjustmembers = NULL;
 #endif
-    amroutine->ambeginscan = pinecone_beginscan;
-    amroutine->amrescan = pinecone_rescan;
-    amroutine->amgettuple = pinecone_gettuple;
+    amroutine->ambeginscan = remote_beginscan;
+    amroutine->amrescan = remote_rescan;
+    amroutine->amgettuple = remote_gettuple;
     amroutine->amgetbitmap = NULL; // an alternative to amgettuple that returns a bitmap of matching tuples
     amroutine->amendscan = no_endscan;
     amroutine->ammarkpos = NULL;

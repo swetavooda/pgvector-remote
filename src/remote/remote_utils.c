@@ -1,4 +1,4 @@
-#include "pinecone.h"
+#include "remote.h"
 
 #include "storage/bufmgr.h"
 #include "access/generic_xlog.h"
@@ -6,7 +6,7 @@
 #include "utils/builtins.h"
 #include "utils/lsyscache.h"
 
-cJSON* tuple_get_pinecone_vector(TupleDesc tup_desc, Datum *values, bool *isnull, char *vector_id)
+cJSON* tuple_get_remote_vector(TupleDesc tup_desc, Datum *values, bool *isnull, char *vector_id)
 {
     cJSON *json_vector = cJSON_CreateObject();
     cJSON *metadata = cJSON_CreateObject();
@@ -42,7 +42,7 @@ cJSON* tuple_get_pinecone_vector(TupleDesc tup_desc, Datum *values, bool *isnull
             default:
                 ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
                                 errmsg("Invalid column type when decoding tuple."),
-                                errhint("Pinecone index only supports boolean, float8, text, and textarray columns")));
+                                errhint("Remote index only supports boolean, float8, text, and textarray columns")));
         }
     }
     // add to vector object
@@ -52,29 +52,29 @@ cJSON* tuple_get_pinecone_vector(TupleDesc tup_desc, Datum *values, bool *isnull
     return json_vector;
 }
 
-cJSON* index_tuple_get_pinecone_vector(Relation index, IndexTuple itup) {
+cJSON* index_tuple_get_remote_vector(Relation index, IndexTuple itup) {
     int natts = index->rd_att->natts;
     Datum *itup_values = (Datum *) palloc(sizeof(Datum) * natts);
     bool *itup_isnull = (bool *) palloc(sizeof(bool) * natts);
     TupleDesc itup_desc = index->rd_att;
     char* vector_id;
     index_deform_tuple(itup, itup_desc, itup_values, itup_isnull);
-    vector_id = pinecone_id_from_heap_tid(itup->t_tid);
-    return tuple_get_pinecone_vector(itup_desc, itup_values, itup_isnull, vector_id);
+    vector_id = remote_id_from_heap_tid(itup->t_tid);
+    return tuple_get_remote_vector(itup_desc, itup_values, itup_isnull, vector_id);
 }
 
-cJSON* heap_tuple_get_pinecone_vector(Relation heap, HeapTuple htup) {
+cJSON* heap_tuple_get_remote_vector(Relation heap, HeapTuple htup) {
     int natts = heap->rd_att->natts;
     Datum *htup_values = (Datum *) palloc(sizeof(Datum) * natts);
     bool *htup_isnull = (bool *) palloc(sizeof(bool) * natts);
     TupleDesc htup_desc = heap->rd_att;
     char* vector_id;
     heap_deform_tuple(htup, htup_desc, htup_values, htup_isnull);
-    vector_id = pinecone_id_from_heap_tid(htup->t_self);
-    return tuple_get_pinecone_vector(htup_desc, htup_values, htup_isnull, vector_id);
+    vector_id = remote_id_from_heap_tid(htup->t_self);
+    return tuple_get_remote_vector(htup_desc, htup_values, htup_isnull, vector_id);
 }
 
-ItemPointerData pinecone_id_get_heap_tid(char *id)
+ItemPointerData remote_id_get_heap_tid(char *id)
 {
     ItemPointerData heap_tid;
     int n_matched;
@@ -87,7 +87,7 @@ ItemPointerData pinecone_id_get_heap_tid(char *id)
     return heap_tid;
 }
 
-char* pinecone_id_from_heap_tid(ItemPointerData heap_tid)
+char* remote_id_from_heap_tid(ItemPointerData heap_tid)
 {
     char* id = palloc(12 + 1);
     snprintf(id, 12 + 1, "%04hx%04hx%04hx", heap_tid.ip_blkid.bi_hi, heap_tid.ip_blkid.bi_lo, heap_tid.ip_posid);
@@ -96,41 +96,41 @@ char* pinecone_id_from_heap_tid(ItemPointerData heap_tid)
 
 
 
-PineconeStaticMetaPageData PineconeSnapshotStaticMeta(Relation index)
+RemoteStaticMetaPageData RemoteSnapshotStaticMeta(Relation index)
 {
     Buffer buf;
     Page page;
-    PineconeStaticMetaPage metap;
-    buf = ReadBuffer(index, PINECONE_STATIC_METAPAGE_BLKNO);
+    RemoteStaticMetaPage metap;
+    buf = ReadBuffer(index, REMOTE_STATIC_METAPAGE_BLKNO);
     LockBuffer(buf, BUFFER_LOCK_SHARE);
     page = BufferGetPage(buf);
-    metap = PineconePageGetStaticMeta(page);
+    metap = RemotePageGetStaticMeta(page);
     UnlockReleaseBuffer(buf);
     return *metap;
 }
 
-PineconeBufferMetaPageData PineconeSnapshotBufferMeta(Relation index)
+RemoteBufferMetaPageData RemoteSnapshotBufferMeta(Relation index)
 {
     Buffer buf;
     Page page;
-    PineconeBufferMetaPage metap;
-    buf = ReadBuffer(index, PINECONE_BUFFER_METAPAGE_BLKNO);
+    RemoteBufferMetaPage metap;
+    buf = ReadBuffer(index, REMOTE_BUFFER_METAPAGE_BLKNO);
     LockBuffer(buf, BUFFER_LOCK_SHARE);
     page = BufferGetPage(buf);
-    metap = PineconePageGetBufferMeta(page);
+    metap = RemotePageGetBufferMeta(page);
     UnlockReleaseBuffer(buf);
     return *metap;
 }
 
-PineconeBufferOpaqueData PineconeSnapshotBufferOpaque(Relation index, BlockNumber blkno)
+RemoteBufferOpaqueData RemoteSnapshotBufferOpaque(Relation index, BlockNumber blkno)
 {
     Buffer buf;
     Page page;
-    PineconeBufferOpaque opaque;
+    RemoteBufferOpaque opaque;
     buf = ReadBuffer(index, blkno);
     LockBuffer(buf, BUFFER_LOCK_SHARE);
     page = BufferGetPage(buf);
-    opaque = PineconePageGetOpaque(page);
+    opaque = RemotePageGetOpaque(page);
     UnlockReleaseBuffer(buf);
     return *opaque;
 }
@@ -138,19 +138,19 @@ PineconeBufferOpaqueData PineconeSnapshotBufferOpaque(Relation index, BlockNumbe
 /*
  * Acquire the buffer's meta page and update its fields.
  */
-void set_buffer_meta_page(Relation index, PineconeCheckpoint* ready_checkpoint, PineconeCheckpoint* flush_checkpoint, PineconeCheckpoint* latest_checkpoint, BlockNumber* insert_page, int* n_tuples_since_last_checkpoint) {
+void set_buffer_meta_page(Relation index, RemoteCheckpoint* ready_checkpoint, RemoteCheckpoint* flush_checkpoint, RemoteCheckpoint* latest_checkpoint, BlockNumber* insert_page, int* n_tuples_since_last_checkpoint) {
     Buffer buffer_meta_buf;
     Page buffer_meta_page;
-    PineconeBufferMetaPage buffer_meta;
+    RemoteBufferMetaPage buffer_meta;
 
     // start WAL logging
     GenericXLogState* state = GenericXLogStart(index);
 
     // get the meta page
-    buffer_meta_buf = ReadBuffer(index, PINECONE_BUFFER_METAPAGE_BLKNO);
+    buffer_meta_buf = ReadBuffer(index, REMOTE_BUFFER_METAPAGE_BLKNO);
     LockBuffer(buffer_meta_buf, BUFFER_LOCK_EXCLUSIVE);
     buffer_meta_page = GenericXLogRegisterBuffer(state, buffer_meta_buf, 0); 
-    buffer_meta = PineconePageGetBufferMeta(buffer_meta_page);
+    buffer_meta = RemotePageGetBufferMeta(buffer_meta_page);
 
     // update the buffer meta page
     // checkpoints
@@ -178,17 +178,17 @@ void set_buffer_meta_page(Relation index, PineconeCheckpoint* ready_checkpoint, 
     UnlockReleaseBuffer(buffer_meta_buf);
 }
 
-char* checkpoint_to_string(PineconeCheckpoint checkpoint) {
+char* checkpoint_to_string(RemoteCheckpoint checkpoint) {
     char* str = palloc(200);
     if (checkpoint.is_checkpoint) {
-        snprintf(str, 200, "#%d, blk %d, tid %s, n_prec %d", checkpoint.checkpoint_no, checkpoint.blkno, pinecone_id_from_heap_tid(checkpoint.tid), checkpoint.n_preceding_tuples);
+        snprintf(str, 200, "#%d, blk %d, tid %s, n_prec %d", checkpoint.checkpoint_no, checkpoint.blkno, remote_id_from_heap_tid(checkpoint.tid), checkpoint.n_preceding_tuples);
     } else {
         snprintf(str, 200, "invalid");
     }
     return str;
 }
 
-char* buffer_meta_to_string(PineconeBufferMetaPageData buffer_meta) {
+char* buffer_meta_to_string(RemoteBufferMetaPageData buffer_meta) {
     char* str = palloc(200);
     // show reach of ready, flush and latest checkpoints on a separate line
     // show insert page and n_tuples_since_last_checkpoint
@@ -197,25 +197,25 @@ char* buffer_meta_to_string(PineconeBufferMetaPageData buffer_meta) {
     return str;
 }
 
-char* buffer_opaque_to_string(PineconeBufferOpaqueData buffer_opaque) {
+char* buffer_opaque_to_string(RemoteBufferOpaqueData buffer_opaque) {
     char* str = palloc(200);
     snprintf(str, 200, "next: %d, prev_check: %d, check: %s", buffer_opaque.nextblkno, buffer_opaque.prev_checkpoint_blkno, checkpoint_to_string(buffer_opaque.checkpoint));
     return str;
 }   
 
-void pinecone_print_relation(Relation index) {
+void remote_print_relation(Relation index) {
     // print each page of the relation for debugging
 
     // print the static meta page and the buffer meta page
-    PineconeStaticMetaPageData static_meta = PineconeSnapshotStaticMeta(index);
-    PineconeBufferMetaPageData buffer_meta = PineconeSnapshotBufferMeta(index);
+    RemoteStaticMetaPageData static_meta = RemoteSnapshotStaticMeta(index);
+    RemoteBufferMetaPageData buffer_meta = RemoteSnapshotBufferMeta(index);
     elog(INFO, "\n\nStatic Meta Page:\n%d dimensions, %s metric, %s host, %s index name",
-         static_meta.dimensions, vector_metric_to_pinecone_metric[static_meta.metric], static_meta.host, static_meta.pinecone_index_name);
+         static_meta.dimensions, vector_metric_to_remote_metric[static_meta.metric], static_meta.host, static_meta.remote_index_name);
     elog(INFO, "\n\nBuffer Meta Page:\n%s", buffer_meta_to_string(buffer_meta));
 
     // print the buffer opaque data for each page
-    for (BlockNumber blkno = PINECONE_BUFFER_HEAD_BLKNO; blkno < RelationGetNumberOfBlocks(index); blkno++) {
-        PineconeBufferOpaqueData buffer_opaque = PineconeSnapshotBufferOpaque(index, blkno);
+    for (BlockNumber blkno = REMOTE_BUFFER_HEAD_BLKNO; blkno < RelationGetNumberOfBlocks(index); blkno++) {
+        RemoteBufferOpaqueData buffer_opaque = RemoteSnapshotBufferOpaque(index, blkno);
         elog(INFO, "\nBuffer Opaque Page %d: %s", blkno, buffer_opaque_to_string(buffer_opaque));
     }
 }

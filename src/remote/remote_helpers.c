@@ -1,5 +1,5 @@
-#include "pinecone_api.h"
-#include "pinecone.h"
+#include "remote_api.h"
+#include "remote.h"
 
 #include "postgres.h"
 
@@ -12,9 +12,9 @@
 #include "fmgr.h"
 
 
-PGDLLEXPORT PG_FUNCTION_INFO_V1(pinecone_indexes);
+PGDLLEXPORT PG_FUNCTION_INFO_V1(remote_indexes);
 Datum
-pinecone_indexes(PG_FUNCTION_ARGS) {
+remote_indexes(PG_FUNCTION_ARGS) {
     ReturnSetInfo *rsinfo = (ReturnSetInfo *) fcinfo->resultinfo;
     Tuplestorestate *tupstore;
     TupleDesc tupdesc;
@@ -61,10 +61,10 @@ pinecone_indexes(PG_FUNCTION_ARGS) {
     MemoryContextSwitchTo(oldcontext);
 
     // validate the api key
-    if (pinecone_api_key == NULL || strlen(pinecone_api_key) == 0) {
-        ereport(ERROR, (errmsg("Pinecone API key is not set")));
+    if (remote_api_key == NULL || strlen(remote_api_key) == 0) {
+        ereport(ERROR, (errmsg("Remote API key is not set")));
     }
-    indexes = list_indexes(pinecone_api_key);
+    indexes = list_indexes(remote_api_key);
     elog(DEBUG1, "Indexes: %s", cJSON_Print(indexes));
 
     cJSON_ArrayForEach(index, indexes) {
@@ -110,9 +110,9 @@ pinecone_indexes(PG_FUNCTION_ARGS) {
 	return (Datum) 0;
 }
 
-PGDLLEXPORT PG_FUNCTION_INFO_V1(pinecone_delete_unused_indexes);
+PGDLLEXPORT PG_FUNCTION_INFO_V1(remote_delete_unused_indexes);
 Datum
-pinecone_delete_unused_indexes(PG_FUNCTION_ARGS) {
+remote_delete_unused_indexes(PG_FUNCTION_ARGS) {
     cJSON *indexes;
     cJSON *index;
     int deleted = 0;
@@ -120,37 +120,37 @@ pinecone_delete_unused_indexes(PG_FUNCTION_ARGS) {
     char query[256];
 
     // validate the api key
-    if (pinecone_api_key == NULL || strlen(pinecone_api_key) == 0) {
-        ereport(ERROR, (errmsg("Pinecone API key is not set")));
+    if (remote_api_key == NULL || strlen(remote_api_key) == 0) {
+        ereport(ERROR, (errmsg("Remote API key is not set")));
     }
 
     // validate indexes response
-    indexes = list_indexes(pinecone_api_key);
+    indexes = list_indexes(remote_api_key);
     if (indexes == NULL || !cJSON_IsArray(indexes)) {
         ereport(ERROR, (errmsg("Failed to list indexes. Got response: %s", cJSON_Print(indexes))));
     } else if (cJSON_GetArraySize(indexes) == 0) {
-        elog(NOTICE, "No indexes in pinecone");
+        elog(NOTICE, "No indexes in remote");
     }
 
     // delete each unused index
     // todo: do this concurrently with multicurl
     cJSON_ArrayForEach(index, indexes) {
-        cJSON* pinecone_index_name_json;
+        cJSON* remote_index_name_json;
         Oid index_oid;
-        char* pinecone_index_name;
+        char* remote_index_name;
         bool unused = false;
 
-        // get the name of the index in pinecone
-        pinecone_index_name_json = cJSON_GetObjectItem(index, "name");
-        if (pinecone_index_name_json == NULL || !cJSON_IsString(pinecone_index_name_json)) {
+        // get the name of the index in remote
+        remote_index_name_json = cJSON_GetObjectItem(index, "name");
+        if (remote_index_name_json == NULL || !cJSON_IsString(remote_index_name_json)) {
             ereport(ERROR, (errmsg("Index name is not a string")));
         }
-        pinecone_index_name = cJSON_GetStringValue(pinecone_index_name_json);
+        remote_index_name = cJSON_GetStringValue(remote_index_name_json);
 
-        // deform pinecone_index_name back into index_name, index_oid
-        // pinecone_index_name has format ("pgvector-%u-%s-%s", index->rd_id, index_name random_postfix)
-        if (sscanf(pinecone_index_name, "pgvector-%u-", &index_oid) != 1) {
-            ereport(NOTICE, (errmsg("Failed to parse index name: %s", pinecone_index_name)));
+        // deform remote_index_name back into index_name, index_oid
+        // remote_index_name has format ("pgvector-%u-%s-%s", index->rd_id, index_name random_postfix)
+        if (sscanf(remote_index_name, "pgvector-%u-", &index_oid) != 1) {
+            ereport(NOTICE, (errmsg("Failed to parse index name: %s", remote_index_name)));
             continue;
         }
 
@@ -174,7 +174,7 @@ pinecone_delete_unused_indexes(PG_FUNCTION_ARGS) {
         SPI_finish();
 
         // delete the index
-        if (unused) pinecone_delete_index(pinecone_api_key, pinecone_index_name);
+        if (unused) remote_delete_index(remote_api_key, remote_index_name);
     }
     PG_RETURN_INT32(deleted);
 }
@@ -203,9 +203,9 @@ Oid get_index_oid_from_name(char* index_name) {
     return index_oid;
 }
 
-PGDLLEXPORT PG_FUNCTION_INFO_V1(pinecone_print_index);
+PGDLLEXPORT PG_FUNCTION_INFO_V1(remote_print_index);
 Datum
-pinecone_print_index(PG_FUNCTION_ARGS) {
+remote_print_index(PG_FUNCTION_ARGS) {
     char* index_name;
     Oid index_oid;
     Relation index;
@@ -217,37 +217,37 @@ pinecone_print_index(PG_FUNCTION_ARGS) {
     #if PG_VERSION_NUM >= 150000
         elog(NOTICE, "Index: %d", index->rd_index->indrelid);
     #endif
-    pinecone_print_relation(index);
+    remote_print_relation(index);
     index_close(index, AccessShareLock);
     elog(NOTICE, "Index closed. (look no reload)");
     PG_RETURN_VOID();
 }
 
-PGDLLEXPORT PG_FUNCTION_INFO_V1(pinecone_index_get_host);
+PGDLLEXPORT PG_FUNCTION_INFO_V1(remote_index_get_host);
 Datum
-pinecone_index_get_host(PG_FUNCTION_ARGS) {
+remote_index_get_host(PG_FUNCTION_ARGS) {
     char* index_name;
     Oid index_oid;
     Relation index;
-    PineconeStaticMetaPageData meta;
+    RemoteStaticMetaPageData meta;
     index_name = text_to_cstring(PG_GETARG_TEXT_PP(0));
     elog(NOTICE, "Index name: %s", index_name);
     index_oid = get_index_oid_from_name(index_name);
     elog(DEBUG1, "Index oid: %u", index_oid);
     index = index_open(index_oid, AccessShareLock);
-    meta = PineconeSnapshotStaticMeta(index);
+    meta = RemoteSnapshotStaticMeta(index);
     elog(DEBUG1, "host: %s", meta.host);
     index_close(index, AccessShareLock);
     elog(DEBUG1, "Index closed");
     PG_RETURN_TEXT_P(cstring_to_text(meta.host));
 }
 
-// pinecone_get_index_stats
-PGDLLEXPORT PG_FUNCTION_INFO_V1(pinecone_print_index_stats);
+// remote_get_index_stats
+PGDLLEXPORT PG_FUNCTION_INFO_V1(remote_print_index_stats);
 Datum
-pinecone_print_index_stats(PG_FUNCTION_ARGS) {
+remote_print_index_stats(PG_FUNCTION_ARGS) {
     char* index_name;
-    PineconeStaticMetaPageData meta;
+    RemoteStaticMetaPageData meta;
     cJSON* stats;
     Oid index_oid;
     Relation index;
@@ -256,9 +256,9 @@ pinecone_print_index_stats(PG_FUNCTION_ARGS) {
     index_oid = get_index_oid_from_name(index_name);
     elog(DEBUG1, "Index oid: %u", index_oid);
     index = index_open(index_oid, AccessShareLock);
-    meta = PineconeSnapshotStaticMeta(index);
+    meta = RemoteSnapshotStaticMeta(index);
     elog(DEBUG1, "host: %s", meta.host);
-    stats = pinecone_get_index_stats(pinecone_api_key, meta.host);
+    stats = remote_get_index_stats(remote_api_key, meta.host);
     elog(DEBUG1, "Stats: %s", cJSON_Print(stats));
     index_close(index, AccessShareLock);
     elog(DEBUG1, "Index closed");
@@ -267,13 +267,13 @@ pinecone_print_index_stats(PG_FUNCTION_ARGS) {
 
 
 // create the mock table
-#ifdef PINECONE_MOCK
-PGDLLEXPORT PG_FUNCTION_INFO_V1(pinecone_create_mock_table);
+#ifdef REMOTE_MOCK
+PGDLLEXPORT PG_FUNCTION_INFO_V1(remote_create_mock_table);
 Datum
-pinecone_create_mock_table(PG_FUNCTION_ARGS) {
+remote_create_mock_table(PG_FUNCTION_ARGS) {
     char query[256];
     int ret;
-    sprintf(query, "CREATE TABLE pinecone_mock (id SERIAL PRIMARY KEY, url_prefix TEXT, method TEXT, body TEXT, response TEXT, curl_code INT NOT NULL DEFAULT 0);");
+    sprintf(query, "CREATE TABLE remote_mock (id SERIAL PRIMARY KEY, url_prefix TEXT, method TEXT, body TEXT, response TEXT, curl_code INT NOT NULL DEFAULT 0);");
     SPI_connect();
     ret = SPI_execute(query, false, 0);
     if (ret != SPI_OK_UTILITY) {
@@ -283,7 +283,7 @@ pinecone_create_mock_table(PG_FUNCTION_ARGS) {
     elog(NOTICE, "Mock table created");
     PG_RETURN_VOID();
 }
-#endif // PINECONE_MOCK
+#endif // REMOTE_MOCK
 
 void lookup_mock_response(CURL* hnd, ResponseData* response_data, CURLcode* curl_code) {
     char query[1024]; // todo: doesn't accomodate large bodies
@@ -296,7 +296,7 @@ void lookup_mock_response(CURL* hnd, ResponseData* response_data, CURLcode* curl
 
     SPI_connect();
     // we want startswith the url prefix and we can allow any of url_prefix, method, body if they are null
-    sprintf(query, "SELECT response, curl_code FROM pinecone_mock WHERE ('%s' LIKE url_prefix || '%%' OR url_prefix IS NULL) \
+    sprintf(query, "SELECT response, curl_code FROM remote_mock WHERE ('%s' LIKE url_prefix || '%%' OR url_prefix IS NULL) \
                             AND (method IS NULL OR method = '%s') \
                             AND (body IS NULL OR body = '%s');", url, response_data->method, response_data->request_body);
     ret = SPI_execute(query, false, 0);

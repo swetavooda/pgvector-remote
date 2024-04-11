@@ -1,7 +1,7 @@
-#include "pinecone_api.h"
-#include "pinecone.h"
+#include "remote_api.h"
+#include "remote.h"
 
-#include "pinecone/remote.h"
+#include "remote/remote.h"
 
 #include <access/generic_xlog.h>
 #include <storage/bufmgr.h>
@@ -27,37 +27,37 @@ void generateRandomAlphanumeric(char *s, const int length) {
 }
 
 
-char* get_pinecone_index_name(Relation index) {
-    char* pinecone_index_name = palloc(PINECONE_NAME_MAX_LENGTH + 1); // pinecone's maximum index name length is 45
+char* get_remote_index_name(Relation index) {
+    char* remote_index_name = palloc(REMOTE_NAME_MAX_LENGTH + 1); // remote's maximum index name length is 45
     char* index_name;
     char random_postfix[5];
     int name_length;
-    // create the pinecone_index_name like pgvector-{oid}-{index_name}-{random_postfix}
+    // create the remote_index_name like pgvector-{oid}-{index_name}-{random_postfix}
     index_name = NameStr(index->rd_rel->relname);
     generateRandomAlphanumeric(random_postfix, 4);
-    name_length = snprintf(pinecone_index_name, PINECONE_NAME_MAX_LENGTH+1, "pgvector-%u-%s-%s", index->rd_id, index_name, random_postfix);
-    if (name_length > PINECONE_NAME_MAX_LENGTH) {
-        ereport(ERROR, (errcode(ERRCODE_NAME_TOO_LONG), errmsg("Pinecone index name too long"), errhint("The pinecone index name is %s... and is %d characters long. The maximum length is 45 characters.", pinecone_index_name, name_length)));
+    name_length = snprintf(remote_index_name, REMOTE_NAME_MAX_LENGTH+1, "pgvector-%u-%s-%s", index->rd_id, index_name, random_postfix);
+    if (name_length > REMOTE_NAME_MAX_LENGTH) {
+        ereport(ERROR, (errcode(ERRCODE_NAME_TOO_LONG), errmsg("Remote index name too long"), errhint("The remote index name is %s... and is %d characters long. The maximum length is 45 characters.", remote_index_name, name_length)));
     }
     // check that all chars are alphanumeric or hyphen
     for (int i = 0; i < name_length; i++) {
-        if (!isalnum(pinecone_index_name[i]) && pinecone_index_name[i] != '-') {
-            elog(DEBUG1, "Invalid character: %c", pinecone_index_name[i]);
-            ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE), errmsg("Pinecone index name (%s) contains invalid character %c", pinecone_index_name, pinecone_index_name[i]), errhint("The pinecone index name can only contain alphanumeric characters and hyphens.")));
+        if (!isalnum(remote_index_name[i]) && remote_index_name[i] != '-') {
+            elog(DEBUG1, "Invalid character: %c", remote_index_name[i]);
+            ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE), errmsg("Remote index name (%s) contains invalid character %c", remote_index_name, remote_index_name[i]), errhint("The remote index name can only contain alphanumeric characters and hyphens.")));
         }
     }
-    return pinecone_index_name;
+    return remote_index_name;
 }
 
 
-IndexBuildResult *pinecone_build(Relation heap, Relation index, IndexInfo *indexInfo)
+IndexBuildResult *remote_build(Relation heap, Relation index, IndexInfo *indexInfo)
 {
-    PineconeOptions *opts = (PineconeOptions *) index->rd_options;
+    RemoteOptions *opts = (RemoteOptions *) index->rd_options;
     IndexBuildResult *result = palloc(sizeof(IndexBuildResult));
     VectorMetric metric = get_opclass_metric(index);
     cJSON* spec_json = cJSON_Parse(GET_STRING_RELOPTION(opts, spec));
     int dimensions = TupleDescAttr(index->rd_att, 0)->atttypmod;
-    char* pinecone_index_name = get_pinecone_index_name(index);
+    char* remote_index_name = get_remote_index_name(index);
     char* host = GET_STRING_RELOPTION(opts, host);
     cJSON* describe_index_response;
     // provider
@@ -72,7 +72,7 @@ IndexBuildResult *pinecone_build(Relation heap, Relation index, IndexInfo *index
     // if the host is specified, check that it is empty
     if (strcmp(host, DEFAULT_HOST) != 0) {
         // Describe the index.
-        describe_index_response = pinecone_get_index_stats(pinecone_api_key, host);
+        describe_index_response = remote_get_index_stats(remote_api_key, host);
         elog(DEBUG1, "Host specified in reloptions, checking if it is empty. Got response: %s", cJSON_Print(describe_index_response));
         // todo: check if the index is empty, check that the dimensions and metric match
         // todo: emit warning when pods fill up
@@ -81,17 +81,17 @@ IndexBuildResult *pinecone_build(Relation heap, Relation index, IndexInfo *index
     // if the host is not specified, create a remote index and get the host
     if (strcmp(host, DEFAULT_HOST) == 0) {
         elog(DEBUG1, "Host not specified in reloptions, creating remote index from spec...");
-        host = CreatePineconeIndexAndWait(index, spec_json, metric, pinecone_index_name, dimensions);
+        host = CreateRemoteIndexAndWait(index, spec_json, metric, remote_index_name, dimensions);
     }
 
     // if overwrite is true, delete all vectors in the remote index
     if (opts->overwrite) {
         elog(DEBUG1, "Overwrite is true, deleting all vectors in remote index...");
-        pinecone_delete_all(pinecone_api_key, host);
+        remote_delete_all(remote_api_key, host);
     }
 
     // init the index pages: static meta, buffer meta, and buffer head
-    InitIndexPages(index, metric, dimensions, pinecone_index_name, host, MAIN_FORKNUM);
+    InitIndexPages(index, metric, dimensions, remote_index_name, host, MAIN_FORKNUM);
 
     // iterate through the base table and upsert the vectors to the remote index
     if (opts->skip_build) {
@@ -103,51 +103,51 @@ IndexBuildResult *pinecone_build(Relation heap, Relation index, IndexInfo *index
         InsertBaseTable(heap, index, indexInfo, host, result);
         // wait for the remote index to finish processing the vectors
         // i.e. describe stats is equal to result->index_tuples
-        index_stats_response = pinecone_get_index_stats(pinecone_api_key, host);
+        index_stats_response = remote_get_index_stats(remote_api_key, host);
         while (cJSON_GetObjectItemCaseSensitive(index_stats_response, "totalVectorCount")->valueint < result->index_tuples) {
             sleep(1);
-            index_stats_response = pinecone_get_index_stats(pinecone_api_key, host);
+            index_stats_response = remote_get_index_stats(remote_api_key, host);
         }
     }
     return result;
 }
 
 
-const char* vector_metric_to_pinecone_metric[VECTOR_METRIC_COUNT] = {
+const char* vector_metric_to_remote_metric[VECTOR_METRIC_COUNT] = {
     "",
     "euclidean",
     "cosine",
     "dotproduct"
 };
 
-char* CreatePineconeIndexAndWait(Relation index, cJSON* spec_json, VectorMetric metric, char* pinecone_index_name, int dimensions) {
+char* CreateRemoteIndexAndWait(Relation index, cJSON* spec_json, VectorMetric metric, char* remote_index_name, int dimensions) {
     char* host = palloc(100);
-    const char* pinecone_metric_name = vector_metric_to_pinecone_metric[metric];
-    cJSON* create_response = pinecone_create_index(pinecone_api_key, pinecone_index_name, dimensions, pinecone_metric_name, spec_json);
+    const char* remote_metric_name = vector_metric_to_remote_metric[metric];
+    cJSON* create_response = remote_create_index(remote_api_key, remote_index_name, dimensions, remote_metric_name, spec_json);
     host = cJSON_GetStringValue(cJSON_GetObjectItemCaseSensitive(create_response, "host"));
-    // now we wait until the pinecone index is done initializing
+    // now we wait until the remote index is done initializing
     // todo: timeout and error handling
     while (!cJSON_IsTrue(cJSON_GetObjectItem(cJSON_GetObjectItem(create_response, "status"), "ready")))
     {
         elog(DEBUG1, "Waiting for remote index to initialize...");
         sleep(1);
-        create_response = describe_index(pinecone_api_key, pinecone_index_name);
+        create_response = describe_index(remote_api_key, remote_index_name);
     }
-    sleep(5); // TODO: ping the host with get_index_stats instead of pinging pinecone.io with describe_index
+    sleep(5); // TODO: ping the host with get_index_stats instead of pinging remote.io with describe_index
     return host;
 }
 
 void InsertBaseTable(Relation heap, Relation index, IndexInfo *indexInfo, char* host, IndexBuildResult *result) {
-    PineconeBuildState buildstate;
+    RemoteBuildState buildstate;
     int reltuples;
     // initialize the buildstate
     buildstate.indtuples = 0;
     buildstate.json_vectors = cJSON_CreateArray();
     strcpy(buildstate.host, host);
     // iterate through the base table and upsert the vectors to the remote index
-    reltuples = table_index_build_scan(heap, index, indexInfo, true, true, pinecone_build_callback, (void *) &buildstate, NULL);
+    reltuples = table_index_build_scan(heap, index, indexInfo, true, true, remote_build_callback, (void *) &buildstate, NULL);
     if (cJSON_GetArraySize(buildstate.json_vectors) > 0) {
-        pinecone_bulk_upsert(pinecone_api_key, host, buildstate.json_vectors, pinecone_vectors_per_request);
+        remote_bulk_upsert(remote_api_key, host, buildstate.json_vectors, remote_vectors_per_request);
     }
     cJSON_Delete(buildstate.json_vectors);
     // stats
@@ -155,16 +155,16 @@ void InsertBaseTable(Relation heap, Relation index, IndexInfo *indexInfo, char* 
     result->index_tuples = buildstate.indtuples;
 }
 
-void pinecone_build_callback(Relation index, ItemPointer tid, Datum *values, bool *isnull, bool tupleIsAlive, void *state)
+void remote_build_callback(Relation index, ItemPointer tid, Datum *values, bool *isnull, bool tupleIsAlive, void *state)
 {
-    PineconeBuildState *buildstate = (PineconeBuildState *) state;
+    RemoteBuildState *buildstate = (RemoteBuildState *) state;
     TupleDesc itup_desc = index->rd_att;
     cJSON *json_vector;
-    char* pinecone_id = pinecone_id_from_heap_tid(*tid);
-    json_vector = tuple_get_pinecone_vector(itup_desc, values, isnull, pinecone_id);
+    char* remote_id = remote_id_from_heap_tid(*tid);
+    json_vector = tuple_get_remote_vector(itup_desc, values, isnull, remote_id);
     cJSON_AddItemToArray(buildstate->json_vectors, json_vector);
-    if (cJSON_GetArraySize(buildstate->json_vectors) >= PINECONE_BATCH_SIZE) {
-        pinecone_bulk_upsert(pinecone_api_key, buildstate->host, buildstate->json_vectors, pinecone_vectors_per_request);
+    if (cJSON_GetArraySize(buildstate->json_vectors) >= REMOTE_BATCH_SIZE) {
+        remote_bulk_upsert(remote_api_key, buildstate->host, buildstate->json_vectors, remote_vectors_per_request);
         cJSON_Delete(buildstate->json_vectors);
         buildstate->json_vectors = cJSON_CreateArray();
     }
@@ -177,17 +177,17 @@ void pinecone_build_callback(Relation index, ItemPointer tid, Datum *values, boo
  * Create the buffer meta page
  * Create the buffer head
  */
-void InitIndexPages(Relation index, VectorMetric metric, int dimensions, char *pinecone_index_name, char *host, int forkNum) {
+void InitIndexPages(Relation index, VectorMetric metric, int dimensions, char *remote_index_name, char *host, int forkNum) {
     Buffer meta_buf, buffer_meta_buf, buffer_head_buf;
     Page meta_page, buffer_meta_page, buffer_head_page;
-    PineconeStaticMetaPage pinecone_static_meta_page;
-    PineconeBufferMetaPage pinecone_buffer_meta_page;
-    PineconeBufferOpaque buffer_head_opaque;
-    PineconeCheckpoint default_checkpoint;
+    RemoteStaticMetaPage remote_static_meta_page;
+    RemoteBufferMetaPage remote_buffer_meta_page;
+    RemoteBufferOpaque buffer_head_opaque;
+    RemoteCheckpoint default_checkpoint;
     GenericXLogState *state = GenericXLogStart(index);
 
     // init default checkpoint
-    default_checkpoint.blkno = PINECONE_BUFFER_HEAD_BLKNO;
+    default_checkpoint.blkno = REMOTE_BUFFER_HEAD_BLKNO;
     default_checkpoint.checkpoint_no = 0;
     default_checkpoint.is_checkpoint = true;
     default_checkpoint.n_preceding_tuples = 0;
@@ -197,50 +197,50 @@ void InitIndexPages(Relation index, VectorMetric metric, int dimensions, char *p
 
     // CREATE THE STATIC META PAGE
     meta_buf = ReadBufferExtended(index, forkNum, P_NEW, RBM_NORMAL, NULL); LockBuffer(meta_buf, BUFFER_LOCK_EXCLUSIVE);
-    if (BufferGetBlockNumber(meta_buf) != PINECONE_STATIC_METAPAGE_BLKNO) {
-        ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR), errmsg("Pinecone static meta page block number mismatch")));
+    if (BufferGetBlockNumber(meta_buf) != REMOTE_STATIC_METAPAGE_BLKNO) {
+        ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR), errmsg("Remote static meta page block number mismatch")));
     }
     meta_page = GenericXLogRegisterBuffer(state, meta_buf, GENERIC_XLOG_FULL_IMAGE);
     PageInit(meta_page, BufferGetPageSize(meta_buf), 0); // format as a page
-    pinecone_static_meta_page = PineconePageGetStaticMeta(meta_page);
-    pinecone_static_meta_page->metric = metric;
-    pinecone_static_meta_page->dimensions = dimensions;
+    remote_static_meta_page = RemotePageGetStaticMeta(meta_page);
+    remote_static_meta_page->metric = metric;
+    remote_static_meta_page->dimensions = dimensions;
     // You must set pd_lower because GenericXLog ignores any changes in the free space between pd_lower and pd_upper
-    ((PageHeader) meta_page)->pd_lower = ((char *) pinecone_static_meta_page - (char *) meta_page) + sizeof(PineconeStaticMetaPageData);
+    ((PageHeader) meta_page)->pd_lower = ((char *) remote_static_meta_page - (char *) meta_page) + sizeof(RemoteStaticMetaPageData);
 
-    // copy host and pinecone_index_name, checking for length
-    if (strlcpy(pinecone_static_meta_page->host, host, PINECONE_HOST_MAX_LENGTH) > PINECONE_HOST_MAX_LENGTH) {
+    // copy host and remote_index_name, checking for length
+    if (strlcpy(remote_static_meta_page->host, host, REMOTE_HOST_MAX_LENGTH) > REMOTE_HOST_MAX_LENGTH) {
         ereport(ERROR, (errcode(ERRCODE_NAME_TOO_LONG), errmsg("Host name too long"),
                         errhint("The host name is %s... and is %d characters long. The maximum length is %d characters.",
-                                host, (int) strlen(host), PINECONE_HOST_MAX_LENGTH)));
+                                host, (int) strlen(host), REMOTE_HOST_MAX_LENGTH)));
     }
-    if (strlcpy(pinecone_static_meta_page->pinecone_index_name, pinecone_index_name, PINECONE_NAME_MAX_LENGTH) > PINECONE_NAME_MAX_LENGTH) {
-        ereport(ERROR, (errcode(ERRCODE_NAME_TOO_LONG), errmsg("Pinecone index name too long"),
-                        errhint("The pinecone index name is %s... and is %d characters long. The maximum length is %d characters.",
-                                pinecone_index_name, (int) strlen(pinecone_index_name), PINECONE_NAME_MAX_LENGTH)));
+    if (strlcpy(remote_static_meta_page->remote_index_name, remote_index_name, REMOTE_NAME_MAX_LENGTH) > REMOTE_NAME_MAX_LENGTH) {
+        ereport(ERROR, (errcode(ERRCODE_NAME_TOO_LONG), errmsg("Remote index name too long"),
+                        errhint("The remote index name is %s... and is %d characters long. The maximum length is %d characters.",
+                                remote_index_name, (int) strlen(remote_index_name), REMOTE_NAME_MAX_LENGTH)));
     }
 
     // CREATE THE BUFFER META PAGE
     buffer_meta_buf = ReadBufferExtended(index, forkNum, P_NEW, RBM_NORMAL, NULL); LockBuffer(buffer_meta_buf, BUFFER_LOCK_EXCLUSIVE);
-    Assert(BufferGetBlockNumber(buffer_meta_buf) == PINECONE_BUFFER_METAPAGE_BLKNO);
+    Assert(BufferGetBlockNumber(buffer_meta_buf) == REMOTE_BUFFER_METAPAGE_BLKNO);
     buffer_meta_page = GenericXLogRegisterBuffer(state, buffer_meta_buf, GENERIC_XLOG_FULL_IMAGE);
-    PageInit(buffer_meta_page, BufferGetPageSize(buffer_meta_buf), sizeof(PineconeBufferMetaPageData)); // format as a page
-    pinecone_buffer_meta_page = PineconePageGetBufferMeta(buffer_meta_page);
-    // set head, pinecone_tail, and live_tail to START
-    pinecone_buffer_meta_page->ready_checkpoint = default_checkpoint;
-    pinecone_buffer_meta_page->flush_checkpoint = default_checkpoint;
-    pinecone_buffer_meta_page->latest_checkpoint = default_checkpoint;
-    pinecone_buffer_meta_page->insert_page = PINECONE_BUFFER_HEAD_BLKNO;
-    pinecone_buffer_meta_page->n_tuples_since_last_checkpoint = 0;
+    PageInit(buffer_meta_page, BufferGetPageSize(buffer_meta_buf), sizeof(RemoteBufferMetaPageData)); // format as a page
+    remote_buffer_meta_page = RemotePageGetBufferMeta(buffer_meta_page);
+    // set head, remote_tail, and live_tail to START
+    remote_buffer_meta_page->ready_checkpoint = default_checkpoint;
+    remote_buffer_meta_page->flush_checkpoint = default_checkpoint;
+    remote_buffer_meta_page->latest_checkpoint = default_checkpoint;
+    remote_buffer_meta_page->insert_page = REMOTE_BUFFER_HEAD_BLKNO;
+    remote_buffer_meta_page->n_tuples_since_last_checkpoint = 0;
     // adjust pd_lower 
-    ((PageHeader) buffer_meta_page)->pd_lower = ((char *) pinecone_buffer_meta_page - (char *) buffer_meta_page) + sizeof(PineconeBufferMetaPageData);
+    ((PageHeader) buffer_meta_page)->pd_lower = ((char *) remote_buffer_meta_page - (char *) buffer_meta_page) + sizeof(RemoteBufferMetaPageData);
 
     // CREATE THE BUFFER HEAD
     buffer_head_buf = ReadBufferExtended(index, forkNum, P_NEW, RBM_NORMAL, NULL); LockBuffer(buffer_head_buf, BUFFER_LOCK_EXCLUSIVE);
-    Assert(BufferGetBlockNumber(buffer_head_buf) == PINECONE_BUFFER_HEAD_BLKNO);
+    Assert(BufferGetBlockNumber(buffer_head_buf) == REMOTE_BUFFER_HEAD_BLKNO);
     buffer_head_page = GenericXLogRegisterBuffer(state, buffer_head_buf, GENERIC_XLOG_FULL_IMAGE);
-    PineconePageInit(buffer_head_page, BufferGetPageSize(buffer_head_buf));
-    buffer_head_opaque = PineconePageGetOpaque(buffer_head_page);
+    RemotePageInit(buffer_head_page, BufferGetPageSize(buffer_head_buf));
+    buffer_head_opaque = RemotePageGetOpaque(buffer_head_page);
     buffer_head_opaque->checkpoint = default_checkpoint;
 
     // cleanup
@@ -254,7 +254,7 @@ void InitIndexPages(Relation index, VectorMetric metric, int dimensions, char *p
 }
 
 
-void pinecone_buildempty(Relation index) {}
+void remote_buildempty(Relation index) {}
 
 void no_buildempty(Relation index){}; // for some reason this is never called even when the base table is empty
 
