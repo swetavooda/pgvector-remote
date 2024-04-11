@@ -94,7 +94,7 @@ IndexBuildResult *pinecone_build(Relation heap, Relation index, IndexInfo *index
         cJSON* index_stats_response;
         InsertBaseTable(heap, index, indexInfo, host, result);
 
-        #ifdef PINECONE_MOCK {
+        #ifdef PINECONE_MOCK
             if (!pinecone_use_mock_response) {
         #endif
                 // wait for the remote index to finish processing the vectors
