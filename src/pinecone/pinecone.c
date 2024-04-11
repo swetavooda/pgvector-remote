@@ -5,6 +5,7 @@
 
 #include <float.h>  
 
+#include "pinecone/remote.h"
 
 #if PG_VERSION_NUM < 150000
 #define MarkGUCPrefixReserved(x) EmitWarningsOnPlaceholders(x)
@@ -23,15 +24,30 @@ bool pinecone_use_mock_response = false;
 // todo: principled batch sizes. Do we ever want the buffer to be bigger than a multi-insert? Possibly if we want to let the buffer fill up when the remote index is down.
 static relopt_kind pinecone_relopt_kind;
 
+// we need to make sure that the enum_options don't go out of scope
+relopt_enum_elt_def provider_enum_options[] = {
+    {"pinecone", PINECONE_PROVIDER},
+    {"milvus", MILVUS_PROVIDER},
+    {NULL, 0}
+};
+
 
 void PineconeInit(void)
 {
+    initialize_remote_index_interfaces();
+
     pinecone_relopt_kind = add_reloption_kind();
     // N.B. The default values are validated when the extension is created, so we have to provide a valid json default
     add_string_reloption(pinecone_relopt_kind, "spec",
                             "Specification of the Pinecone Index. Refer to https://docs.pinecone.io/reference/create_index",
                             DEFAULT_SPEC,
                             NULL,
+                            AccessExclusiveLock);
+    add_enum_reloption(pinecone_relopt_kind, "provider",
+                            "Pinecone provider. Currently only 'pinecone' is supported",
+                            provider_enum_options,
+                            PINECONE_PROVIDER,
+                            "detail msg",
                             AccessExclusiveLock);
     add_string_reloption(pinecone_relopt_kind, "host",
                             "Host of the Pinecone Index. Cannot be used with spec",
@@ -102,6 +118,7 @@ bytea * pinecone_options(Datum reloptions, bool validate)
 {
 	static const relopt_parse_elt tab[] = {
 		{"spec", RELOPT_TYPE_STRING, offsetof(PineconeOptions, spec)},
+		{"provider", RELOPT_TYPE_ENUM, offsetof(PineconeOptions, provider)},
         {"host", RELOPT_TYPE_STRING, offsetof(PineconeOptions, host)},
         {"overwrite", RELOPT_TYPE_BOOL, offsetof(PineconeOptions, overwrite)},
         {"skip_build", RELOPT_TYPE_BOOL, offsetof(PineconeOptions, skip_build)}

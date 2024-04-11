@@ -5,9 +5,10 @@ SHLIB_LINK += -lcurl
 
 MODULE_big = vector
 DATA = $(wildcard sql/*--*.sql)
-OBJS = src/hnsw.o src/hnswbuild.o src/hnswinsert.o src/hnswscan.o src/hnswutils.o src/hnswvacuum.o src/ivfbuild.o src/ivfflat.o src/ivfinsert.o src/ivfkmeans.o src/ivfscan.o src/ivfutils.o src/ivfvacuum.o src/vector.o \
-	src/pinecone/pinecone_api.o src/pinecone/pinecone.o src/cJSON.o src/pinecone/pinecone_helpers.o src/pinecone/pinecone_build.o \
-	src/pinecone/pinecone_insert.o src/pinecone/pinecone_scan.o src/pinecone/pinecone_utils.o src/pinecone/pinecone_vacuum.o src/pinecone/pinecone_validate.o
+
+SOURCES = $(wildcard src/*.c) $(wildcard src/pinecone/*.c) $(wildcard src/pinecone/clients/pinecone/*.c) $(wildcard src/pinecone/clients/milvus/*.c)
+OBJS = $(SOURCES:.c=.o)
+
 HEADERS = src/vector.h 
 
 TESTS = $(wildcard test/sql/*.sql)
@@ -15,6 +16,7 @@ REGRESS = $(patsubst test/sql/%.sql,%,$(TESTS))
 REGRESS_OPTS = --inputdir=test --load-extension=$(EXTENSION)
 
 OPTFLAGS = -march=native -O0 -fno-strict-aliasing -DPINECONE_MOCK -g
+PG_CFLAGS += -I$(srcdir)/src
 
 # Mac ARM doesn't support -march=native
 ifeq ($(shell uname -s), Darwin)

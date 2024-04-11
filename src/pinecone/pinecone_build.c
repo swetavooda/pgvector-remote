@@ -1,6 +1,8 @@
 #include "pinecone_api.h"
 #include "pinecone.h"
 
+#include "pinecone/remote.h"
+
 #include <access/generic_xlog.h>
 #include <storage/bufmgr.h>
 #include <access/reloptions.h>
@@ -58,6 +60,12 @@ IndexBuildResult *pinecone_build(Relation heap, Relation index, IndexInfo *index
     char* pinecone_index_name = get_pinecone_index_name(index);
     char* host = GET_STRING_RELOPTION(opts, host);
     cJSON* describe_index_response;
+    // provider
+    Provider provider = opts->provider;
+    RemoteIndexInterface* remote_index_interface = remote_index_interfaces[provider];
+
+    elog(DEBUG1, "Provider: %d", provider);
+    elog(DEBUG1, "int_to_string(10) = %s", remote_index_interface->int_to_string(10));
 
     validate_api_key();
 
@@ -125,6 +133,7 @@ char* CreatePineconeIndexAndWait(Relation index, cJSON* spec_json, VectorMetric 
         sleep(1);
         create_response = describe_index(pinecone_api_key, pinecone_index_name);
     }
+    sleep(5); // TODO: ping the host with get_index_stats instead of pinging pinecone.io with describe_index
     return host;
 }
 

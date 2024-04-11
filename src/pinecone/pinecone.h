@@ -7,6 +7,9 @@
 // todo: get these out of the header
 #include "access/amapi.h"
 #include "src/vector.h"
+
+#include "pinecone/remote.h"
+
 #include "src/cJSON.h"
 #include <nodes/execnodes.h>
 #include <nodes/pathnodes.h>
@@ -86,6 +89,7 @@ typedef struct PineconeOptions
 {
 	int32		vl_len_;		/* varlena header (do not touch directly!) */
     int         spec; // spec is a string; this is its offset in the rd_options
+    Provider    provider;
     int         host;
     bool        overwrite; // todo: should this be int?
     bool        skip_build;
