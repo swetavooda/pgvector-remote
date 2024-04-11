@@ -53,6 +53,9 @@ IndexBuildResult *pinecone_build(Relation heap, Relation index, IndexInfo *index
     PineconeOptions *opts = (PineconeOptions *) index->rd_options;
     IndexBuildResult *result = palloc(sizeof(IndexBuildResult));
     VectorMetric metric = get_opclass_metric(index);
+    // Log spec.
+    pinecone_spec_validator(opts);
+    const char* spec = GET_STRING_RELOPTION(opts, spec);
     cJSON* spec_json = cJSON_Parse(GET_STRING_RELOPTION(opts, spec));
     int dimensions = TupleDescAttr(index->rd_att, 0)->atttypmod;
     char* pinecone_index_name = get_pinecone_index_name(index);
