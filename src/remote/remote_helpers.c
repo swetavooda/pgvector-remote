@@ -1,4 +1,4 @@
-#include "remote_api.h"
+#include "src/remote/clients/pinecone/remote_api.h"
 #include "remote.h"
 
 #include "postgres.h"
@@ -6,7 +6,7 @@
 #include "fmgr.h"
 #include <nodes/execnodes.h>
 #include "funcapi.h"
-#include "src/cJSON.h"
+#include "src/remote/cJSON.h"
 #include "utils/builtins.h"
 #include "executor/spi.h"
 #include "fmgr.h"
@@ -61,10 +61,10 @@ remote_indexes(PG_FUNCTION_ARGS) {
     MemoryContextSwitchTo(oldcontext);
 
     // validate the api key
-    if (remote_api_key == NULL || strlen(remote_api_key) == 0) {
+    if (pinecone_api_key == NULL || strlen(pinecone_api_key) == 0) {
         ereport(ERROR, (errmsg("Remote API key is not set")));
     }
-    indexes = list_indexes(remote_api_key);
+    indexes = list_indexes(pinecone_api_key);
     elog(DEBUG1, "Indexes: %s", cJSON_Print(indexes));
 
     cJSON_ArrayForEach(index, indexes) {
@@ -120,12 +120,12 @@ remote_delete_unused_indexes(PG_FUNCTION_ARGS) {
     char query[256];
 
     // validate the api key
-    if (remote_api_key == NULL || strlen(remote_api_key) == 0) {
+    if (pinecone_api_key == NULL || strlen(pinecone_api_key) == 0) {
         ereport(ERROR, (errmsg("Remote API key is not set")));
     }
 
     // validate indexes response
-    indexes = list_indexes(remote_api_key);
+    indexes = list_indexes(pinecone_api_key);
     if (indexes == NULL || !cJSON_IsArray(indexes)) {
         ereport(ERROR, (errmsg("Failed to list indexes. Got response: %s", cJSON_Print(indexes))));
     } else if (cJSON_GetArraySize(indexes) == 0) {
@@ -174,7 +174,7 @@ remote_delete_unused_indexes(PG_FUNCTION_ARGS) {
         SPI_finish();
 
         // delete the index
-        if (unused) remote_delete_index(remote_api_key, remote_index_name);
+        if (unused) remote_delete_index(pinecone_api_key, remote_index_name);
     }
     PG_RETURN_INT32(deleted);
 }
@@ -258,7 +258,7 @@ remote_print_index_stats(PG_FUNCTION_ARGS) {
     index = index_open(index_oid, AccessShareLock);
     meta = RemoteSnapshotStaticMeta(index);
     elog(DEBUG1, "host: %s", meta.host);
-    stats = remote_get_index_stats(remote_api_key, meta.host);
+    stats = remote_get_index_stats(pinecone_api_key, meta.host);
     elog(DEBUG1, "Stats: %s", cJSON_Print(stats));
     index_close(index, AccessShareLock);
     elog(DEBUG1, "Index closed");
@@ -267,7 +267,6 @@ remote_print_index_stats(PG_FUNCTION_ARGS) {
 
 
 // create the mock table
-#ifdef REMOTE_MOCK
 PGDLLEXPORT PG_FUNCTION_INFO_V1(remote_create_mock_table);
 Datum
 remote_create_mock_table(PG_FUNCTION_ARGS) {
@@ -283,7 +282,6 @@ remote_create_mock_table(PG_FUNCTION_ARGS) {
     elog(NOTICE, "Mock table created");
     PG_RETURN_VOID();
 }
-#endif // REMOTE_MOCK
 
 void lookup_mock_response(CURL* hnd, ResponseData* response_data, CURLcode* curl_code) {
     char query[1024]; // todo: doesn't accomodate large bodies

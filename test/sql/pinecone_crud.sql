@@ -2,14 +2,14 @@
 -- suppress output
 \o /dev/null
 -- logging level
-SET client_min_messages = 'notice';
+SET client_min_messages = 'debug1';
 -- flush each vector individually
-SET pinecone.vectors_per_request = 1;
-SET pinecone.requests_per_batch = 1;
+SET remote.vectors_per_request = 1;
+SET remote.requests_per_batch = 1;
 -- disable flat scan to force use of the index
 SET enable_seqscan = off;
 -- Testing database is responsible for initializing the mock table with 
--- SELECT pinecone_create_mock_table(); 
+-- SELECT remote_create_mock_table(); 
 -- CREATE TABLE
 DROP TABLE IF EXISTS t;
 CREATE TABLE t (id int, val vector(3));
@@ -17,7 +17,7 @@ CREATE TABLE t (id int, val vector(3));
 
 -- CREATE INDEX
 -- mock create index
-INSERT INTO pinecone_mock (url_prefix, method, response)
+INSERT INTO remote_mock (url_prefix, method, response)
 VALUES ('https://api.pinecone.io/indexes', 'POST', $${
         "name": "invalid",
         "metric": "euclidean",
@@ -35,17 +35,17 @@ VALUES ('https://api.pinecone.io/indexes', 'POST', $${
         }
 }$$);
 -- mock describe index stats
-INSERT INTO pinecone_mock (url_prefix, method, response)
+INSERT INTO remote_mock (url_prefix, method, response)
 VALUES ('https://fakehost/describe_index_stats', 'GET', '{"namespaces":{},"dimension":3,"indexFullness":0,"totalVectorCount":0}');
 -- create index
-CREATE INDEX i2 ON t USING pinecone (val) WITH (spec = '{"serverless":{"cloud":"aws","region":"us-west-2"}}');
--- CREATE INDEX i2 ON t USING pinecone (val) WITH (host = 'fakehost');
+CREATE INDEX i2 ON t USING remote (val) WITH (spec = '{"serverless":{"cloud":"aws","region":"us-west-2"}}');
+-- CREATE INDEX i2 ON t USING remote (val) WITH (host = 'fakehost');
 
 
 
 -- INSERT INTO TABLE
 -- mock upsert
-INSERT INTO pinecone_mock (url_prefix, method, response)
+INSERT INTO remote_mock (url_prefix, method, response)
 VALUES ('https://fakehost/vectors/upsert', 'POST', '{"upsertedCount":1}');
 -- insert into table
 INSERT INTO t (id, val) VALUES (1, '[1,0,0]');
@@ -53,7 +53,7 @@ INSERT INTO t (id, val) VALUES (2, '[1,0,1]');
 
 -- SELECT FROM TABLE
 -- mock query
-INSERT INTO pinecone_mock (url_prefix, method, response)
+INSERT INTO remote_mock (url_prefix, method, response)
 VALUES ('https://fakehost/query', 'POST', $${
         "results":      [],
         "matches":      [{
@@ -67,7 +67,7 @@ VALUES ('https://fakehost/query', 'POST', $${
         }
 }$$);
 -- mock fetch
-INSERT INTO pinecone_mock (url_prefix, method, response)
+INSERT INTO remote_mock (url_prefix, method, response)
 VALUES ('https://fakehost/vectors/fetch', 'GET', $${
         "code": 3,
         "message":      "No IDs provided for fetch query",

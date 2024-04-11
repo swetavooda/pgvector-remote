@@ -7,7 +7,7 @@
 #include "fmgr.h"
 #include "hnsw.h"
 #include "ivfflat.h"
-#include "pinecone/pinecone.h"
+#include "remote/remote.h"
 #include "lib/stringinfo.h"
 #include "libpq/pqformat.h"
 #include "port.h"				/* for strtof() */
@@ -41,7 +41,7 @@ _PG_init(void)
 {
 	HnswInit();
 	IvfflatInit();
-	PineconeInit();	
+	RemoteInit();	
 }
 
 /*
@@ -325,23 +325,23 @@ vector_out(PG_FUNCTION_ARGS)
 }
 
 /*
- * report operator class's corresponding pinecone metric type
+ * report operator class's corresponding metric type
  */
-PGDLLEXPORT PG_FUNCTION_INFO_V1(vector_l2_pinecone_metric_name);
+PGDLLEXPORT PG_FUNCTION_INFO_V1(vector_l2_metric_name);
 Datum
-vector_l2_pinecone_metric_name(PG_FUNCTION_ARGS)
+vector_l2_metric_name(PG_FUNCTION_ARGS)
 {
 	PG_RETURN_INT32(EUCLIDEAN_METRIC);
 }
-PGDLLEXPORT PG_FUNCTION_INFO_V1(vector_ip_pinecone_metric_name);
+PGDLLEXPORT PG_FUNCTION_INFO_V1(vector_ip_metric_name);
 Datum
-vector_ip_pinecone_metric_name(PG_FUNCTION_ARGS)
+vector_ip_metric_name(PG_FUNCTION_ARGS)
 {
 	PG_RETURN_INT32(INNER_PRODUCT_METRIC);
 }
-PGDLLEXPORT PG_FUNCTION_INFO_V1(vector_cosine_pinecone_metric_name);
+PGDLLEXPORT PG_FUNCTION_INFO_V1(vector_cosine_metric_name);
 Datum
-vector_cosine_pinecone_metric_name(PG_FUNCTION_ARGS)
+vector_cosine_metric_name(PG_FUNCTION_ARGS)
 {
 	PG_RETURN_INT32(COSINE_METRIC);
 }

@@ -209,8 +209,8 @@ void remote_print_relation(Relation index) {
     // print the static meta page and the buffer meta page
     RemoteStaticMetaPageData static_meta = RemoteSnapshotStaticMeta(index);
     RemoteBufferMetaPageData buffer_meta = RemoteSnapshotBufferMeta(index);
-    elog(INFO, "\n\nStatic Meta Page:\n%d dimensions, %s metric, %s host, %s index name",
-         static_meta.dimensions, vector_metric_to_remote_metric[static_meta.metric], static_meta.host, static_meta.remote_index_name);
+    elog(INFO, "\n\nStatic Meta Page:\n%d dimensions, %d metric, %s host, %s index name",
+         static_meta.dimensions, static_meta.metric, static_meta.host, static_meta.remote_index_name);
     elog(INFO, "\n\nBuffer Meta Page:\n%s", buffer_meta_to_string(buffer_meta));
 
     // print the buffer opaque data for each page

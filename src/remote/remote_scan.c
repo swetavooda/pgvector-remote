@@ -1,4 +1,4 @@
-#include "remote_api.h"
+#include "src/remote/clients/pinecone/remote_api.h"
 #include "remote.h"
 
 #include <storage/bufmgr.h>
@@ -14,10 +14,10 @@
 
 #include <math.h>
 
-RemoteCheckpoint* get_checkpoints_to_fetch(Relation index) {
+RemoteCheckpoint* get_checkpoints_to_fetch(Relation index, int* n_checkpoints_return) {
     // starting at the current remote page, create a list of each checkpoint page's checkpoint (blkno, tid, checkpt_no)
     RemoteBufferMetaPageData buffer_meta = RemoteSnapshotBufferMeta(index);
-    int n_checkpoints = buffer_meta.flush_checkpoint.checkpoint_no - buffer_meta.ready_checkpoint.checkpoint_no;
+    int n_checkpoints = buffer_meta.flush_checkpoint.checkpoint_no - buffer_meta.ready_checkpoint.checkpoint_no - 1;
     RemoteCheckpoint* checkpoints;
     BlockNumber currentblkno = buffer_meta.flush_checkpoint.blkno;
     RemoteBufferOpaqueData opaque = RemoteSnapshotBufferOpaque(index, currentblkno);
@@ -26,31 +26,22 @@ RemoteCheckpoint* get_checkpoints_to_fetch(Relation index) {
     if (n_checkpoints > remote_max_fetched_vectors_for_liveness_check) {
         elog(WARNING, "Remote's internal indexing is more than %d batches behind what you have send to remote (flushed). This means remote is not keeping up with the rate of insertion.", n_checkpoints);
         n_checkpoints = remote_max_fetched_vectors_for_liveness_check;
+    } else if (n_checkpoints < 0) {
+        n_checkpoints = 0;
     }
-    checkpoints = palloc((n_checkpoints+1) * sizeof(RemoteCheckpoint));
+
+    checkpoints = palloc((n_checkpoints) * sizeof(RemoteCheckpoint));
 
     // traverse from the flushed checkpoint back to the live checkpoint and append each checkpoint to the list
     for (int i = 0; i < n_checkpoints; i++) {
-        // move to the previous checkpoint
+        // move to the previous checkpoint (i.e. omit the latest flush checkpoint because we have no way to know if it is live or not)
         currentblkno = opaque.prev_checkpoint_blkno;
         opaque = RemoteSnapshotBufferOpaque(index, currentblkno);
         checkpoints[i] = opaque.checkpoint;
-        // we don't want to fetch the checkpoint we are already at (this will be the last checkpoint in the list if we don't exceed the max_fetched_vectors_for_liveness_check limit)
-        if (currentblkno == buffer_meta.ready_checkpoint.blkno) {
-            checkpoints[i].is_checkpoint = false;
-        }
     }
-    // append a sentinel value
-    checkpoints[n_checkpoints].is_checkpoint = false;
-    return checkpoints;
-}
 
-cJSON* fetch_ids_from_checkpoints(RemoteCheckpoint* checkpoints) {
-    cJSON* fetch_ids = cJSON_CreateArray();
-    for (int i = 0; checkpoints[i].is_checkpoint; i++) {
-        cJSON_AddItemToArray(fetch_ids, cJSON_CreateString(remote_id_from_heap_tid(checkpoints[i].tid)));
-    }
-    return fetch_ids;
+    *n_checkpoints_return = n_checkpoints;
+    return checkpoints;
 }
 
 RemoteCheckpoint get_best_fetched_checkpoint(Relation index, RemoteCheckpoint* checkpoints, cJSON* fetch_results) {
@@ -93,10 +84,10 @@ IndexScanDesc remote_beginscan(Relation index, int nkeys, int norderbys)
 {
 	IndexScanDesc scan;
     RemoteScanOpaque so;
-    AttrNumber attNums[] = {1}; // sort only on the first column
-	Oid			sortOperators[] = {Float8LessOperator};
-	Oid			sortCollations[] = {InvalidOid};
-	bool		nullsFirstFlags[] = {false};
+    AttrNumber attNums[] = {1, 2};
+	Oid			sortOperators[] = {Float8LessOperator, TIDLessOperator};
+	Oid			sortCollations[] = {InvalidOid, InvalidOid};
+	bool		nullsFirstFlags[] = {false, false};
 	scan = RelationGetIndexScan(index, nkeys, norderbys);
     so = (RemoteScanOpaque) palloc(sizeof(RemoteScanOpaqueData));
 
@@ -104,14 +95,13 @@ IndexScanDesc remote_beginscan(Relation index, int nkeys, int norderbys)
     so->procinfo = index_getprocinfo(index, 1, 1); // lookup the first support function in the opclass for the first attribute
 
     // create tuple description for sorting
-    so->tupdesc = CreateTemplateTupleDesc(3);
+    so->tupdesc = CreateTemplateTupleDesc(2);
     TupleDescInitEntry(so->tupdesc, (AttrNumber) 1, "distance", FLOAT8OID, -1, 0);
-    TupleDescInitEntry(so->tupdesc, (AttrNumber) 2, "heaptid_blkno", INT4OID, -1, 0);
-    TupleDescInitEntry(so->tupdesc, (AttrNumber) 3, "heaptid_offset", INT2OID, -1, 0);
+    TupleDescInitEntry(so->tupdesc, (AttrNumber) 2, "heaptid", TIDOID, -1, 0);
 
     // prep sort
     // allocate 6MB for the heapsort
-    so->sortstate = tuplesort_begin_heap(so->tupdesc, 1, attNums, sortOperators, sortCollations, nullsFirstFlags, 6000, NULL, false);
+    so->sortstate = tuplesort_begin_heap(so->tupdesc, 2, attNums, sortOperators, sortCollations, nullsFirstFlags, 6000, NULL, false);
     so->slot = MakeSingleTupleTableSlot(so->tupdesc, &TTSOpsMinimalTuple);
     
     scan->opaque = so;
@@ -187,49 +177,36 @@ cJSON* remote_build_filter(Relation index, ScanKey keys, int nkeys) {
 
 /*
  * Start or restart an index scan
- * todo: can we reuse a tcp connection created in remote_beginscan?
  */
 void remote_rescan(IndexScanDesc scan, ScanKey keys, int nkeys, ScanKey orderbys, int norderbys)
 {
 	Vector * vec;
-	cJSON *query_vector_values;
 	// cJSON *remote_response;
-    cJSON* fetch_ids;
     RemoteCheckpoint* fetch_checkpoints;
-    cJSON** responses;
-    cJSON *query_response, *fetch_response;
-	cJSON *matches;
-    Datum query_datum; // query vector
+    RemoteCheckpoint best_checkpoint;
+    Datum query_datum;
     RemoteStaticMetaPageData remote_metadata = RemoteSnapshotStaticMeta(scan->indexRelation);
     RemoteScanOpaque so = (RemoteScanOpaque) scan->opaque;
     TupleDesc tupdesc = RelationGetDescr(scan->indexRelation); // used for accessing
-    cJSON* filter;
-    RemoteCheckpoint best_checkpoint;
+    //
+    Relation index = scan->indexRelation;
+    RemoteOptions *options = (RemoteOptions *) index->rd_options;
+    RemoteIndexInterface* remote_index_interface = remote_index_interfaces[options->provider];
+    PreparedQuery query;
+    int n_checkpoints;
+    ItemPointerData* remote_tids = palloc(sizeof(ItemPointerData) * remote_top_k); // remote top-k ctids
 
     // check that the ORDER BY is on the first column (which is assumed to be a column on vectors)
     if (scan->numberOfOrderBys == 0 || orderbys[0].sk_attno != 1) {
-        ereport(ERROR,
-                (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-                 errmsg("Index must be ordered by the first column")));
+        ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED), errmsg("Index must be ordered by the first column")));
     }
     
-    // build the filter
-    filter = remote_build_filter(scan->indexRelation, keys, nkeys);
-
 	// get the query vector
     query_datum = orderbys[0].sk_argument;
     vec = DatumGetVector(query_datum);
-    query_vector_values = cJSON_CreateFloatArray(vec->x, vec->dim);
-
-    // query remote top-k
-    fetch_checkpoints = get_checkpoints_to_fetch(scan->indexRelation);
-    fetch_ids = fetch_ids_from_checkpoints(fetch_checkpoints);
-    responses = remote_query_with_fetch(remote_api_key, remote_metadata.host, remote_top_k, query_vector_values, filter, true, fetch_ids);
-    query_response = responses[0];
-    fetch_response = responses[1];
-    elog(DEBUG1, "query_response: %s", cJSON_Print(query_response));
-    elog(DEBUG1, "fetch_response: %s", cJSON_Print(fetch_response));
-    best_checkpoint = get_best_fetched_checkpoint(scan->indexRelation, fetch_checkpoints, fetch_response);
+    fetch_checkpoints = get_checkpoints_to_fetch(scan->indexRelation, &n_checkpoints);
+    query = remote_index_interface->prepare_query(scan->indexRelation, keys, nkeys, vec);
+    remote_tids = remote_index_interface->query_with_fetch(remote_metadata.host, remote_top_k, query, true, fetch_checkpoints, n_checkpoints, &best_checkpoint);
 
     // set the remote_ready_page to the best checkpoint
     if (best_checkpoint.is_checkpoint) {
@@ -239,23 +216,19 @@ void remote_rescan(IndexScanDesc scan, ScanKey keys, int nkeys, ScanKey orderbys
     // copy metric
     so->metric = remote_metadata.metric;
 
-    // copy remote_response to scan opaque
-    // response has a matches array, set opaque to the child of matches aka first match
-    matches = cJSON_GetObjectItemCaseSensitive(query_response, "matches");
-    so->remote_results = matches->child;
-    if (matches->child == NULL) {
-        // todo: hint the user that the buffer might not be flushed
-        ereport(DEBUG1, (errcode(ERRCODE_NO_DATA),
-                         errmsg("No matches found")));
-    }
-
     /* Requires MVCC-compliant snapshot as not able to pin during sorting */
     /* https://www.postgresql.org/docs/current/index-locking.html */
     if (!IsMVCCSnapshot(scan->xs_snapshot))
         elog(ERROR, "non-MVCC snapshots are not supported with remote");
 
+    // get the ctids from the buffer
+    ItemPointerData* buffer_tids = buffer_get_tids(scan->indexRelation);
+
+
     // locally scan the buffer and add them to the sort state
     load_buffer_into_sort(scan->indexRelation, so, query_datum, tupdesc);
+
+    // TODO: add the remote results to the sort state
     
     // allocate for xs_orderbyvals (*Datum)
     scan->xs_orderbyvals = palloc(sizeof(Datum)); // assumes only one ORDER BY
@@ -265,45 +238,77 @@ void remote_rescan(IndexScanDesc scan, ScanKey keys, int nkeys, ScanKey orderbys
 
 // todo: save stats from inserting from base table into the meta
 
-void load_buffer_into_sort(Relation index, RemoteScanOpaque so, Datum query_datum, TupleDesc index_tupdesc)
-{
+void load_tids_into_sort(Relation index, RemoteScanOpaque so, Datum query_datum, TupleDesc index_tupdesc, ItemPointerData* tids, int n_tids) {
     // todo: make sure that this is just as fast as pgvector's flatscan e.g. using vectorized operations
     TupleTableSlot *slot = MakeSingleTupleTableSlot(so->tupdesc, &TTSOpsVirtual);
-    RemoteBufferMetaPageData buffer_meta = RemoteSnapshotBufferMeta(index);
-    BlockNumber currentblkno = buffer_meta.ready_checkpoint.blkno;
-    int n_sortedtuple = 0;
-    int n_tuples = buffer_meta.latest_checkpoint.n_preceding_tuples + buffer_meta.n_tuples_since_last_checkpoint;
-    int unflushed_tuples = n_tuples - buffer_meta.flush_checkpoint.n_preceding_tuples;
-    int unready_tuples = n_tuples - buffer_meta.ready_checkpoint.n_preceding_tuples;
-    size_t bloom_filter_size = (((int) (1.44 * BUFFER_BLOOM_K * unready_tuples))>>3) + 1; // bloom filter size in bytes, 1.44 is the optimal bloom filter expansion factor
 
     // index info
     IndexInfo *indexInfo = BuildIndexInfo(index);
     Datum* index_values = palloc(sizeof(Datum) * indexInfo->ii_NumIndexAttrs);
     bool* index_isnull = palloc(sizeof(bool) * indexInfo->ii_NumIndexAttrs);
+
     // get the base table
     Oid baseTableOid = index->rd_index->indrelid;
     Relation baseTableRel = RelationIdGetRelation(baseTableOid);
     Snapshot snapshot = GetActiveSnapshot();
+
     // begin the index fetch (this the preferred way for an index to request tuples from its base table)
     IndexFetchTableData *fetchData = baseTableRel->rd_tableam->index_fetch_begin(baseTableRel);
     TupleTableSlot *base_table_slot = MakeSingleTupleTableSlot(baseTableRel->rd_att, &TTSOpsBufferHeapTuple);
     bool call_again, all_dead, found;
-    
-    // check H - T > max_local_scan
-    if (unready_tuples > remote_max_buffer_scan) {
-        ereport(NOTICE, (errcode(ERRCODE_INSUFFICIENT_RESOURCES),
-                         errmsg("Buffer is too large"),
-                         errhint("There are %d tuples in the buffer that have not yet been flushed to remote and %d tuples in remote that are not yet live. You may want to consider flushing the buffer.", unflushed_tuples, unready_tuples - unflushed_tuples)));
+
+    for (int i = 0; i < n_tids; i++) {
+        // fetch the vector from the base table
+        ItemPointerData tid = tids[i];
+        found = baseTableRel->rd_tableam->index_fetch_tuple(fetchData, &tid, snapshot, base_table_slot, &call_again, &all_dead);
+        if (!found) {
+            elog(WARNING, "could not find tuple in base table");
+            continue; // do not add the tuple to the sortstate
+        }
+
+        // extract the indexed columns
+        FormIndexDatum(indexInfo, base_table_slot, NULL, index_values, index_isnull);
+        if (index_isnull[0]) elog(ERROR, "vector is null");
+        
+        // add the tuple
+        ExecClearTuple(slot);
+        slot->tts_values[0] = FunctionCall2(so->procinfo, index_values[0], query_datum); // compute distance between entry and query
+        slot->tts_isnull[0] = false;
+        slot->tts_values[1] = TransactionIdGetDatum(&tid);
+        slot->tts_isnull[1] = false;
+        ExecStoreVirtualTuple(slot);
+
+        tuplesort_puttupleslot(so->sortstate, slot);
     }
 
-    // initialize the bloom filter
-    // so->bloom_filter = bloom_create(BUFFER_BLOOM_K, buffer_meta.n_tuples_since_last_checkpoint);
-    so->bloom_filter = palloc0(bloom_filter_size);
-    so->bloom_filter_size = bloom_filter_size;
+    // end the index fetch
+    ExecDropSingleTupleTableSlot(base_table_slot);
+    baseTableRel->rd_tableam->index_fetch_end(fetchData);
+    // close the base table
+    RelationClose(baseTableRel);
 
+    tuplesort_performsort(so->sortstate);
+    
+    // get the first tuple from the sortstate
+    so->more_buffer_tuples = tuplesort_gettupleslot(so->sortstate, true, false, so->slot, NULL);
+}
 
-    // add tuples to the sortstate
+ItemPointerData* buffer_get_tids(Relation index)
+{
+    RemoteBufferMetaPageData buffer_meta = RemoteSnapshotBufferMeta(index);
+    BlockNumber currentblkno = buffer_meta.ready_checkpoint.blkno;
+    int n_tuples = buffer_meta.latest_checkpoint.n_preceding_tuples + buffer_meta.n_tuples_since_last_checkpoint;
+    int unflushed_tuples = n_tuples - buffer_meta.flush_checkpoint.n_preceding_tuples;
+    int unready_tuples = n_tuples - buffer_meta.ready_checkpoint.n_preceding_tuples;
+    int n_tids = 0;
+
+    ItemPointerData* buffer_tids = palloc(sizeof(ItemPointerData) * remote_max_buffer_scan);
+
+    // check H - T > max_local_scan
+    if (unready_tuples > remote_max_buffer_scan) ereport(NOTICE, (errcode(ERRCODE_INSUFFICIENT_RESOURCES), errmsg("Buffer is too large"), errhint("There are %d tuples in the buffer that have not yet been flushed to remote and %d tuples in remote that are not yet live. You may want to consider flushing the buffer.", unflushed_tuples, unready_tuples - unflushed_tuples)));
+    
+
+    // add tuples to buffer_tids
     while (BlockNumberIsValid(currentblkno)) {
         Buffer buf;
         Page page;
@@ -316,45 +321,12 @@ void load_buffer_into_sort(Relation index, RemoteScanOpaque so, Datum query_datu
 
         // add all tuples on the page to the sortstate
         for (OffsetNumber offno = FirstOffsetNumber; offno <= PageGetMaxOffsetNumber(page); offno = OffsetNumberNext(offno)) {
-            // get the tid and the vector from the heap tuple
-            ItemId itemid;
-            Item item;
+            // get the tid
             RemoteBufferTuple buffer_tup;
-            itemid = PageGetItemId(page, offno);
-            item = PageGetItem(page, itemid);
+            ItemId itemid = PageGetItemId(page, offno);
+            Item item = PageGetItem(page, itemid);
             buffer_tup = *((RemoteBufferTuple*) item);
- 
-            // add the tuple to the bloom filter
-            for (int i = 0; i < BUFFER_BLOOM_K; i++) {
-                uint32 hash = hash_tid(buffer_tup.tid, i); // i is the seed
-                so->bloom_filter[(hash >> 3) % so->bloom_filter_size] |= (1 << (hash & 7));
-            }
-
-            // fetch the vector from the base table
-            found = baseTableRel->rd_tableam->index_fetch_tuple(fetchData, &buffer_tup.tid, snapshot, base_table_slot, &call_again, &all_dead);
-            if (!found) {
-                elog(DEBUG2, "could not find tuple in base table");
-                elog(DEBUG2, "call_again: %d, all_dead: %d", call_again, all_dead);
-                continue; // do not add the tuple to the sortstate
-            }
-
-            // extract the indexed columns
-            FormIndexDatum(indexInfo, base_table_slot, NULL, index_values, index_isnull);
-
-            if (index_isnull[0]) elog(ERROR, "vector is null");
-           
-            // add the tuples
-            ExecClearTuple(slot);
-            slot->tts_values[0] = FunctionCall2(so->procinfo, index_values[0], query_datum); // compute distance between entry and query
-            slot->tts_isnull[0] = false;
-            slot->tts_values[1] = Int32GetDatum(ItemPointerGetBlockNumber(&buffer_tup.tid));
-            slot->tts_isnull[1] = false;
-            slot->tts_values[2] = Int16GetDatum(ItemPointerGetOffsetNumber(&buffer_tup.tid));
-            slot->tts_isnull[2] = false;
-            ExecStoreVirtualTuple(slot);
-
-            tuplesort_puttupleslot(so->sortstate, slot);
-            n_sortedtuple++;
+            buffer_tids[n_tids++] = buffer_tup.tid;
         }
 
         // move to the next page
@@ -362,21 +334,13 @@ void load_buffer_into_sort(Relation index, RemoteScanOpaque so, Datum query_datu
         UnlockReleaseBuffer(buf);
 
         // stop if we have added enough tuples to the sortstate
-        if (n_sortedtuple >= remote_max_buffer_scan) {
+        if (n_tids >= remote_max_buffer_scan) {
             elog(NOTICE, "Reached max local scan");
             break;
         }
     }
-    // end the index fetch
-    ExecDropSingleTupleTableSlot(base_table_slot);
-    baseTableRel->rd_tableam->index_fetch_end(fetchData);
-    // close the base table
-    RelationClose(baseTableRel);
 
-    tuplesort_performsort(so->sortstate);
-    
-    // get the first tuple from the sortstate
-    so->more_buffer_tuples = tuplesort_gettupleslot(so->sortstate, true, false, so->slot, NULL);
+    return buffer_tids;
 }
 
 /*
@@ -392,53 +356,6 @@ bool remote_gettuple(IndexScanDesc scan, ScanDirection dir)
     double remote_best_dist, buffer_best_dist, dist, dist_lower_bound;
     bool isnull;
     float rel_tol = 0.15; // relative tolerance for distance recheck; TODO: this should depend on the metric; the inaccuracy arises from remote using half precision floats
-
-    // while the match is in the bloom filter, get the next match
-    while (match != NULL) {
-        bool duplicate = true;
-        id_str = cJSON_GetStringValue(cJSON_GetObjectItemCaseSensitive(match, "id"));
-        match_heaptid = remote_id_get_heap_tid(id_str);
-        for (int i = 0; i < BUFFER_BLOOM_K; i++) {
-            uint32 hash = hash_tid(match_heaptid, i); // i is the seed
-            if (!(so->bloom_filter[(hash >> 3) % so->bloom_filter_size] & (1 << (hash & 7)))) {
-                duplicate = false;
-                break;
-            }
-        }
-        if (duplicate) {
-            elog(DEBUG1, "skipping duplicate match %s. this was returned by remote, but was also found in the local buffer", id_str);
-            match = match->next;
-            so->remote_results = match;
-        } else {
-            break;
-        }
-    }
-
-    // use a case statement to determine the best distance
-    if (match == NULL) {
-        remote_best_dist = __DBL_MAX__;
-    } else {
-        switch (so->metric)
-        {
-        case EUCLIDEAN_METRIC:
-            // remote returns the square of the euclidean distance, which is what we want
-            remote_best_dist = cJSON_GetNumberValue(cJSON_GetObjectItemCaseSensitive(match, "score"));
-            break;
-        case COSINE_METRIC:
-            // remote returns the cosine similarity, but we want "cosine distance" which is 1 - cosine similarity
-            remote_best_dist = 1 - cJSON_GetNumberValue(cJSON_GetObjectItemCaseSensitive(match, "score"));
-            break;
-        case INNER_PRODUCT_METRIC:
-            // remote returns the dot product, but we want "dot product distance" which is - dot product
-            remote_best_dist = - cJSON_GetNumberValue(cJSON_GetObjectItemCaseSensitive(match, "score"));
-            break;
-        default:
-            elog(ERROR, "unsupported metric");
-        }
-    }
-                          
-    buffer_best_dist = (so->more_buffer_tuples) ? DatumGetFloat8(slot_getattr(so->slot, 1, &isnull)) : __DBL_MAX__;
-    // log (match == NULL) so->more_buffer_tuples and the scores
 
     elog(DEBUG1, "✓ remote_best_dist: %f, buffer_best_dist: %f", remote_best_dist, buffer_best_dist);
     // merge the results from the buffer and the remote index

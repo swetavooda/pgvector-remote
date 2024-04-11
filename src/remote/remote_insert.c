@@ -204,8 +204,10 @@ void FlushToRemote(Relation index)
     Buffer buf, buffer_meta_buf;
     Page page, buffer_meta_page;
     BlockNumber currentblkno = REMOTE_BUFFER_HEAD_BLKNO;
-    cJSON* json_vectors = cJSON_CreateArray();
     bool success;
+    // get the remote interface
+    RemoteOptions *opts = (RemoteOptions *) index->rd_options;
+    RemoteIndexInterface *interface = remote_index_interfaces[opts->provider];
 
     // take a snapshot of the buffer meta
     // we don't need to worry about another transaction advancing the remote tail because we have the remote insertion lock
@@ -227,7 +229,10 @@ void FlushToRemote(Relation index)
     bool call_again = false;
     bool all_dead = false;
     bool found = false;
-    char* vector_id = NULL; // todo: free
+
+    // hold
+    PreparedTuple* prepared_tuples = (PreparedTuple*) palloc(sizeof(PreparedTuple) * REMOTE_BATCH_SIZE);
+    int n_prepared_tuples = 0;
 
     // acquire the remote insertion lock
     LOCKTAG remote_flush_lock;
@@ -256,7 +261,6 @@ void FlushToRemote(Relation index)
         // Add all tuples on the page.
         for (int i = 1; i <= PageGetMaxOffsetNumber(page); i++)
         {
-            cJSON* json_vector;
             ItemId itemid = PageGetItemId(page, i);
             Item item = PageGetItem(page, itemid);
             RemoteBufferTuple buffer_tup = *((RemoteBufferTuple*) item);
@@ -278,10 +282,10 @@ void FlushToRemote(Relation index)
             } else {
                 // extract the indexed columns
                 FormIndexDatum(indexInfo, slot, NULL, index_values, index_isnull);
+                // we know in advance how many vectors we want to send, correct?
+                // each vector is individually prepared and we pass an array
 
-                vector_id = remote_id_from_heap_tid(buffer_tup.tid);
-                json_vector = tuple_get_remote_vector(index->rd_att, index_values, index_isnull, vector_id);
-                cJSON_AddItemToArray(json_vectors, json_vector);
+                prepared_tuples[n_prepared_tuples++] = interface->prepare_tuple_for_bulk_insert(index->rd_att, index_values, index_isnull, &buffer_tup.tid);
             }
         }
 
@@ -300,13 +304,8 @@ void FlushToRemote(Relation index)
         if (RemotePageGetOpaque(page)->checkpoint.is_checkpoint) {
             GenericXLogState *state = GenericXLogStart(index); // start a new WAL record
  
-            // flush the vectors to remote if there are any
-            if (cJSON_GetArraySize(json_vectors) == 0) {
-                ereport(WARNING, (errcode(ERRCODE_INTERNAL_ERROR),
-                                errmsg("No vectors to flush to remote")));
-            } else {
-                remote_bulk_upsert(remote_api_key, static_meta.host, json_vectors, remote_vectors_per_request);
-            }
+            interface->bulk_upsert(static_meta.host, prepared_tuples, remote_vectors_per_request, n_prepared_tuples);
+            n_prepared_tuples = 0;
 
             // lock the buffer meta page
             buffer_meta_buf = ReadBuffer(index, REMOTE_BUFFER_METAPAGE_BLKNO);
@@ -319,9 +318,6 @@ void FlushToRemote(Relation index)
             // save and release
             GenericXLogFinish(state);
             UnlockReleaseBuffer(buffer_meta_buf);
-
-            // free
-            cJSON_Delete(json_vectors); json_vectors = cJSON_CreateArray();
 
             // stop if we don't expect to have another batch because we have reached the last checkpoint
             if (buffer_meta.latest_checkpoint.blkno == currentblkno) break;

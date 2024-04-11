@@ -2,19 +2,12 @@
 #define REMOTE_API_H
 
 #include <curl/curl.h>
-#include "src/cJSON.h"
+#include "src/remote/cJSON.h"
+#include "src/remote/curl_utils.h"
 
 #define bool _Bool
 
 typedef CURL** CURLHandleList;
-
-typedef struct {
-    char message[256];
-    char *request_body;
-    char *data;
-    size_t length;
-    char method[10]; // GET, POST, DELETE, etc.
-} ResponseData;
 
 size_t write_callback(char *contents, size_t size, size_t nmemb, void *userdata);
 struct curl_slist *create_common_headers(const char *api_key);

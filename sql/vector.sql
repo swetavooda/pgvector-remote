@@ -101,18 +101,18 @@ CREATE FUNCTION vector_combine(double precision[], double precision[]) RETURNS d
 
 -- pinecone name functions
 
-CREATE FUNCTION vector_l2_pinecone_metric_name() RETURNS int4
+CREATE FUNCTION vector_l2_metric_name() RETURNS int4
 	AS 'MODULE_PATHNAME' LANGUAGE C IMMUTABLE STRICT PARALLEL SAFE;
 
-CREATE FUNCTION vector_ip_pinecone_metric_name() RETURNS int4
+CREATE FUNCTION vector_ip_metric_name() RETURNS int4
 	AS 'MODULE_PATHNAME' LANGUAGE C IMMUTABLE STRICT PARALLEL SAFE;
 
-CREATE FUNCTION vector_cosine_pinecone_metric_name() RETURNS int4
+CREATE FUNCTION vector_cosine_metric_name() RETURNS int4
 	AS 'MODULE_PATHNAME' LANGUAGE C IMMUTABLE STRICT PARALLEL SAFE;
 
 -- pinecone helper functions
 
-CREATE TYPE pinecone_index_stats AS (
+CREATE TYPE remote_index_stats AS (
 	name text,
 	dimension integer,
 	metric text,
@@ -121,22 +121,22 @@ CREATE TYPE pinecone_index_stats AS (
 	spec json
 );
 
-CREATE FUNCTION pinecone_indexes() RETURNS SETOF pinecone_index_stats
+CREATE FUNCTION remote_indexes() RETURNS SETOF remote_index_stats
 	AS 'MODULE_PATHNAME' LANGUAGE C VOLATILE STRICT PARALLEL SAFE;
 
-CREATE FUNCTION pinecone_delete_unused_indexes() RETURNS int4
+CREATE FUNCTION remote_delete_unused_indexes() RETURNS int4
 	AS 'MODULE_PATHNAME' LANGUAGE C VOLATILE STRICT PARALLEL SAFE;
 
-CREATE FUNCTION pinecone_print_index(text) RETURNS int4
+CREATE FUNCTION remote_print_index(text) RETURNS int4
 	AS 'MODULE_PATHNAME' LANGUAGE C VOLATILE STRICT PARALLEL SAFE;
 
-CREATE FUNCTION pinecone_index_get_host(text) RETURNS text
+CREATE FUNCTION remote_index_get_host(text) RETURNS text
 	AS 'MODULE_PATHNAME' LANGUAGE C VOLATILE STRICT PARALLEL SAFE;
 
--- CREATE FUNCTION pinecone_print_index_stats(text) RETURNS int4
+-- CREATE FUNCTION remote_print_index_stats(text) RETURNS int4
 	-- AS 'MODULE_PATHNAME' LANGUAGE C VOLATILE STRICT PARALLEL SAFE;
 
-CREATE FUNCTION pinecone_create_mock_table() RETURNS int4
+CREATE FUNCTION remote_create_mock_table() RETURNS int4
 	AS 'MODULE_PATHNAME' LANGUAGE C VOLATILE STRICT PARALLEL SAFE;
 
 -- aggregates
@@ -283,12 +283,12 @@ CREATE ACCESS METHOD hnsw TYPE INDEX HANDLER hnswhandler;
 
 COMMENT ON ACCESS METHOD hnsw IS 'hnsw index access method';
 
-CREATE FUNCTION pineconehandler(internal) RETURNS index_am_handler
+CREATE FUNCTION remotehandler(internal) RETURNS index_am_handler
 	AS 'MODULE_PATHNAME' LANGUAGE C;
 
-CREATE ACCESS METHOD pinecone TYPE INDEX HANDLER pineconehandler;
+CREATE ACCESS METHOD remote TYPE INDEX HANDLER remotehandler;
 
-COMMENT ON ACCESS METHOD pinecone IS 'pinecone index access method';
+COMMENT ON ACCESS METHOD remote IS 'remote index access method';
 
 -- opclasses
 
@@ -338,41 +338,41 @@ CREATE OPERATOR CLASS vector_cosine_ops
 	FUNCTION 1 vector_negative_inner_product(vector, vector),
 	FUNCTION 2 vector_norm(vector);
 
--- pinecone opclasses
+-- remote opclasses
 
 CREATE OPERATOR CLASS vector_l2_ops
-	DEFAULT FOR TYPE vector USING pinecone AS
+	DEFAULT FOR TYPE vector USING remote AS
 	OPERATOR 1 <-> (vector, vector) FOR ORDER BY float_ops,
 	FUNCTION 1 vector_l2_squared_distance(vector, vector),
-	FUNCTION 2 vector_l2_pinecone_metric_name();
+	FUNCTION 2 vector_l2_metric_name();
 
 CREATE OPERATOR CLASS vector_ip_ops
-	FOR TYPE vector USING pinecone AS
+	FOR TYPE vector USING remote AS
 	OPERATOR 1 <#> (vector, vector) FOR ORDER BY float_ops,
 	FUNCTION 1 vector_negative_inner_product(vector, vector),
-	FUNCTION 2 vector_ip_pinecone_metric_name();
+	FUNCTION 2 vector_ip_metric_name();
 
 CREATE OPERATOR CLASS vector_cosine_ops
-	FOR TYPE vector USING pinecone AS
+	FOR TYPE vector USING remote AS
 	OPERATOR 1 <=> (vector, vector) FOR ORDER BY float_ops,
 	FUNCTION 1 cosine_distance(vector, vector),
-	FUNCTION 2 vector_cosine_pinecone_metric_name();
+	FUNCTION 2 vector_cosine_metric_name();
 
--- dummy boolean opclass for pinecone
-CREATE OPERATOR CLASS bool_pinecone_ops
-	DEFAULT FOR TYPE boolean USING pinecone AS
+-- dummy boolean opclass for remote
+CREATE OPERATOR CLASS bool_remote_ops
+	DEFAULT FOR TYPE boolean USING remote AS
 	OPERATOR 3 = (boolean, boolean),
 	OPERATOR 6 != (boolean, boolean);
 
--- text opclass for pinecone
-CREATE OPERATOR CLASS text_pinecone_ops
-	DEFAULT FOR TYPE text USING pinecone AS
+-- text opclass for remote
+CREATE OPERATOR CLASS text_remote_ops
+	DEFAULT FOR TYPE text USING remote AS
 	OPERATOR 3 = (text, text),
 	OPERATOR 6 != (text, text);
 
--- float opclass for pinecone
-CREATE OPERATOR CLASS float_pinecone_ops
-	DEFAULT FOR TYPE float8 USING pinecone AS
+-- float opclass for remote
+CREATE OPERATOR CLASS float_remote_ops
+	DEFAULT FOR TYPE float8 USING remote AS
 	OPERATOR 1 < (float8, float8),
 	OPERATOR 2 <= (float8, float8),
 	OPERATOR 3 = (float8, float8),
@@ -381,14 +381,14 @@ CREATE OPERATOR CLASS float_pinecone_ops
 	OPERATOR 6 != (float8, float8);
 
 -- list of strings
-CREATE OPERATOR CLASS list_of_strings_pinecone_ops
-	DEFAULT FOR TYPE text[] USING pinecone AS
+CREATE OPERATOR CLASS list_of_strings_remote_ops
+	DEFAULT FOR TYPE text[] USING remote AS
 	OPERATOR 7 && (anyarray, anyarray), -- overlap
 	OPERATOR 2 @> (anyarray, anyarray);
 
--- int opclass for pinecone
-CREATE OPERATOR CLASS int_pinecone_ops
-	DEFAULT FOR TYPE int4 USING pinecone AS
+-- int opclass for remote
+CREATE OPERATOR CLASS int_remote_ops
+	DEFAULT FOR TYPE int4 USING remote AS
 	OPERATOR 1 < (int4, int4),
 	OPERATOR 2 <= (int4, int4),
 	OPERATOR 3 = (int4, int4),

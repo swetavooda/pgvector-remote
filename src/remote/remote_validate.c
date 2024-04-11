@@ -3,15 +3,6 @@
 #include <access/reloptions.h>
 
 
-void validate_api_key(void) {
-    if (remote_api_key == NULL || strlen(remote_api_key) == 0) {
-        ereport(ERROR,
-                (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-                 errmsg("Remote API key not set"),
-                 errhint("Set the remote API key using the remote.api_key GUC. E.g. ALTER SYSTEM SET remote.api_key TO 'your-api-key'")));
-    }
-}
-
 void validate_vector_nonzero(Vector* vector) {
     if (vector_eq_zero_internal(vector)) {
         ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),

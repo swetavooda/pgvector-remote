@@ -5,24 +5,12 @@
 #ifndef REMOTE_H
 #define REMOTE_H
 
-typedef enum Provider
-{
-    PINECONE_PROVIDER,
-    MILVUS_PROVIDER,
-    NUM_PROVIDERS
-} Provider;
-
-typedef struct
-{
-    int (*int_to_int)(int);
-    char* (*int_to_string)(int);
-} RemoteIndexInterface;
-
-extern RemoteIndexInterface* remote_index_interfaces[NUM_PROVIDERS];
-
-
-void initialize_remote_index_interfaces(void);
-
+#include "src/remote/cJSON.h"
+#include "src/remote/remote.h"  
+#include "src/vector.h"
+#include "postgres.h" // bool
+#include "access/tupdesc.h"
+#include "storage/itemptr.h" 
 #endif // REMOTE_H
 
 

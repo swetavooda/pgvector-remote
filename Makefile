@@ -6,7 +6,7 @@ SHLIB_LINK += -lcurl
 MODULE_big = vector
 DATA = $(wildcard sql/*--*.sql)
 
-SOURCES = $(wildcard src/*.c) $(wildcard src/pinecone/*.c) $(wildcard src/pinecone/clients/pinecone/*.c) $(wildcard src/pinecone/clients/milvus/*.c)
+SOURCES = $(wildcard src/*.c) $(wildcard src/remote/*.c) $(wildcard src/remote/clients/pinecone/*.c) $(wildcard src/remote/clients/milvus/*.c)
 OBJS = $(SOURCES:.c=.o)
 
 HEADERS = src/vector.h 
@@ -15,14 +15,14 @@ TESTS = $(wildcard test/sql/*.sql)
 REGRESS = $(patsubst test/sql/%.sql,%,$(TESTS))
 REGRESS_OPTS = --inputdir=test --load-extension=$(EXTENSION)
 
-OPTFLAGS = -march=native -O0 -fno-strict-aliasing -DPINECONE_MOCK -g
+OPTFLAGS = -march=native -O0 -fno-strict-aliasing -DREMOTE_MOCK -g
 PG_CFLAGS += -I$(srcdir)/src
 
 # Mac ARM doesn't support -march=native
 ifeq ($(shell uname -s), Darwin)
 	ifeq ($(shell uname -p), arm)
 		# no difference with -march=armv8.5-a
-		OPTFLAGS = -O0 -fno-strict-aliasing -DPINECONE_MOCK -g
+		OPTFLAGS = -O0 -fno-strict-aliasing -DREMOTE_MOCK -g
 	endif
 endif
 

@@ -2,10 +2,7 @@
 #ifndef MILVUS_CLIENT_H
 #define MILVUS_CLIENT_H
 
-#include "pinecone/remote.h"
-
-int mv_int_to_int(int x);
-char* mv_int_to_string(int x);
+#include "remote/rremote.h"
 
 extern RemoteIndexInterface milvus_remote_index_interface;
 

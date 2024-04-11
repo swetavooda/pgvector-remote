@@ -1,16 +1,16 @@
 #ifndef REMOTE_INDEX_AM_H
 #define REMOTE_INDEX_AM_H
 
-#include "remote_api.h"
 #include "postgres.h"
+// curl
+#include <curl/curl.h>
+#include "src/remote/curl_utils.h"
 
 // todo: get these out of the header
 #include "access/amapi.h"
 #include "src/vector.h"
 
-#include "remote/remote.h"
-
-#include "src/cJSON.h"
+#include "src/remote/cJSON.h"
 #include <nodes/execnodes.h>
 #include <nodes/pathnodes.h>
 #include <utils/array.h>
@@ -43,6 +43,9 @@
 #define REMOTE_STRATEGY_ARRAY_OVERLAP 7
 #define REMOTE_STRATEGY_ARRAY_CONTAINS 2
 
+typedef char* PreparedTuple;
+typedef char* PreparedQuery;
+
 // structs
 typedef struct RemoteScanOpaqueData
 {
@@ -56,19 +59,12 @@ typedef struct RemoteScanOpaqueData
     TupleTableSlot *slot; // TODO ??
     bool isnull;
     bool more_buffer_tuples;
-    char* bloom_filter;
-    size_t bloom_filter_size;
 
     // support functions
     FmgrInfo *procinfo;
 
-    // results
-    cJSON* remote_results;
-
 } RemoteScanOpaqueData;
 typedef RemoteScanOpaqueData *RemoteScanOpaque;
-
-extern const char* vector_metric_to_remote_metric[VECTOR_METRIC_COUNT];
 
 typedef struct RemoteStaticMetaPageData
 {
@@ -78,12 +74,13 @@ typedef struct RemoteStaticMetaPageData
     VectorMetric metric;
 } RemoteStaticMetaPageData;
 typedef RemoteStaticMetaPageData *RemoteStaticMetaPage;
-typedef struct RemoteBuildState
+
+typedef enum Provider
 {
-    int64 indtuples; // total number of tuples indexed
-    cJSON *json_vectors; // array of json vectors
-    char host[100];
-} RemoteBuildState;
+    PINECONE_PROVIDER,
+    MILVUS_PROVIDER,
+    NUM_PROVIDERS
+} Provider;
 
 typedef struct RemoteOptions
 {
@@ -136,8 +133,53 @@ typedef struct RemoteBufferTuple
 } RemoteBufferTuple;
 #define REMOTE_BUFFER_TUPLE_VACUUMED 1 << 0
 
+
+// typedef for a function that maps an int to an int
+
+typedef void (*ri_check_credentials_function)(void);
+typedef char* (*ri_create_host_from_spec_function)(int dimensions, VectorMetric metric, char* remote_index_name, char* spec);
+typedef void (*ri_wait_for_index_function)(char* host, int n_vectors);
+typedef void (*ri_delete_all_function)(char* host);
+typedef bool (*ri_host_is_empty_function)(char* host);
+typedef bool (*ri_bulk_upsert_function)(char* host, PreparedTuple* prepared_vectors, int remote_vectors_per_request, int n_prepared_tuples);
+
+typedef PreparedQuery (*ri_prepare_query_function)(Relation index, ScanKey keys, int nkeys, Vector* vector);
+
+typedef ItemPointerData* (*ri_query_with_fetch_function)(char* host, int top_k, PreparedQuery query, bool include_vector_ids, RemoteCheckpoint* checkpoints, int n_checkpoints, RemoteCheckpoint* best_checkpoint_return);
+
+typedef PreparedTuple (*ri_prepare_tuple_for_bulk_insert_function)(TupleDesc tupdesc, Datum* values, bool* nulls, ItemPointer ctid);
+
+typedef struct
+{
+    // create index
+    ri_check_credentials_function check_credentials;
+    ri_create_host_from_spec_function create_host_from_spec;
+    ri_wait_for_index_function wait_for_index;
+    ri_delete_all_function delete_all;
+    ri_host_is_empty_function host_is_empty;
+    // insert
+    ri_prepare_tuple_for_bulk_insert_function prepare_tuple_for_bulk_insert;
+    ri_bulk_upsert_function bulk_upsert; /* bulk_upsert is responsible for freeing each PreparedTuple */
+    // query
+    ri_prepare_query_function prepare_query;
+    ri_query_with_fetch_function query_with_fetch;
+} RemoteIndexInterface;
+
+extern RemoteIndexInterface* remote_index_interfaces[NUM_PROVIDERS];
+
+typedef struct RemoteBuildState
+{
+    int64 indtuples; // total number of tuples indexed
+    PreparedTuple *prepared_tuples; // array of prepared tuples
+    int n_prepared_tuples; // number of prepared tuples
+    char host[100];
+    RemoteIndexInterface* remote_index_interface;
+} RemoteBuildState;
+
+
 // GUC variables
-extern char* remote_api_key;
+extern char* pinecone_api_key;
+extern char* milvus_api_key;
 extern int remote_top_k;
 extern int remote_vectors_per_request;
 extern int remote_requests_per_batch;
@@ -165,9 +207,9 @@ void generateRandomAlphanumeric(char *s, const int length);
 char* get_remote_index_name(Relation index);
 IndexBuildResult *remote_build(Relation heap, Relation index, IndexInfo *indexInfo);
 char* CreateRemoteIndexAndWait(Relation index, cJSON* spec_json, VectorMetric metric, char* remote_index_name, int dimensions);
-void InsertBaseTable(Relation heap, Relation index, IndexInfo *indexInfo, char* host, IndexBuildResult *result);
+void InsertBaseTable(Relation heap, Relation index, IndexInfo *indexInfo, char* host, IndexBuildResult *result, RemoteIndexInterface* remote_index_interface);
 void remote_build_callback(Relation index, ItemPointer tid, Datum *values, bool *isnull, bool tupleIsAlive, void *state);
-void InitIndexPages(Relation index, VectorMetric metric, int dimensions, char *remote_index_name, char *host, int forkNum);
+void InitIndexPages(Relation index, VectorMetric metric, int dimensions, char *remote_index_name, char *host);
 void remote_buildempty(Relation index);
 void no_buildempty(Relation index); // for some reason this is never called even when the base table is empty
 VectorMetric get_opclass_metric(Relation index);
@@ -188,13 +230,13 @@ void FlushToRemote(Relation index);
 IndexScanDesc remote_beginscan(Relation index, int nkeys, int norderbys);
 cJSON* remote_build_filter(Relation index, ScanKey keys, int nkeys);
 void remote_rescan(IndexScanDesc scan, ScanKey keys, int nkeys, ScanKey orderbys, int norderbys);
-void load_buffer_into_sort(Relation index, RemoteScanOpaque so, Datum query_datum, TupleDesc index_tupdesc);
+ItemPointerData* buffer_get_tids(Relation index);
+void load_tids_into_sort(Relation index, RemoteScanOpaque so, Datum query_datum, TupleDesc index_tupdesc, ItemPointerData* tids, int n_tids);
 bool remote_gettuple(IndexScanDesc scan, ScanDirection dir);
 void no_endscan(IndexScanDesc scan);
-RemoteCheckpoint* get_checkpoints_to_fetch(Relation index);
+RemoteCheckpoint* get_checkpoints_to_fetch(Relation index, int* n_checkpoints);
 RemoteCheckpoint get_best_fetched_checkpoint(Relation index, RemoteCheckpoint* checkpoints, cJSON* fetch_results);
 cJSON *fetch_ids_from_checkpoints(RemoteCheckpoint *checkpoints);
-#define BUFFER_BLOOM_K 20 // bloom filter k 
 
 
 
@@ -227,9 +269,6 @@ char* checkpoint_to_string(RemoteCheckpoint checkpoint);
 char* buffer_meta_to_string(RemoteBufferMetaPageData buffer_meta);
 char* buffer_opaque_to_string(RemoteBufferOpaqueData buffer_opaque);
 void remote_print_relation(Relation index);
-// hashing and bloom filters
-uint64 murmurhash64(uint64 data);
-uint32 hash_tid(ItemPointerData tid, int seed);
 
 // helpers
 Oid get_index_oid_from_name(char* index_name);
@@ -237,5 +276,6 @@ void lookup_mock_response(CURL* hnd, ResponseData* response_data, CURLcode* curl
 
 
 // misc.
+void initialize_remote_index_interfaces(void);
 
 #endif // REMOTE_INDEX_AM_H
