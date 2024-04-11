@@ -34,6 +34,16 @@ const char* vector_metric_to_pinecone_metric[VECTOR_METRIC_COUNT] = {
     "dotproduct"
 };
 
+void pinecone_spec_validator(char* spec) {
+    if (spec == NULL || cJSON_Parse(spec) == NULL) {
+        ereport(ERROR,
+                (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+                 errmsg("Invalid spec"),
+                 errhint("Spec should be a valid JSON object e.g. WITH (spec='{\"serverless\":{\"cloud\":\"aws\",\"region\":\"us-west-2\"}}').\n \
+                         Refer to https://docs.pinecone.io/reference/create_index")));
+    }
+}
+
 // char* CreateRemoteIndexAndWait(Relation index, cJSON* spec_json, VectorMetric metric, char* remote_index_name, int dimensions) {
         // host = remote_index_interface->create_host_from_spec(dimensions, metric, remote_index_name, spec);
 char* pinecone_create_host_from_spec(int dimensions, VectorMetric metric, char* spec, Relation index) {
@@ -249,6 +259,7 @@ RemoteIndexInterface pinecone_remote_index_interface = {
     .validate_host_schema = pinecone_validate_host_schema,
     .count_live = pinecone_count_live,
     .est_network_cost = pinecone_est_network_cost,
+    .spec_validator = pinecone_spec_validator,
     // upsert
     .begin_prepare_bulk_insert = pinecone_begin_prepare_bulk_insert,
     .append_prepare_bulk_insert = pinecone_append_prepare_bulk_insert,

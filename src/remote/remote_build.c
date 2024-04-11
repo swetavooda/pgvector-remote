@@ -41,6 +41,9 @@ IndexBuildResult *remote_build(Relation heap, Relation index, IndexInfo *indexIn
         remote_index_interface->validate_host_schema(host, dimensions, metric, index);
     } else {
         // create a remote index from the spec
+        if (remote_index_interface->spec_validator != NULL) {
+            remote_index_interface->spec_validator(spec);
+        }
         host = remote_index_interface->create_host_from_spec(dimensions, metric, spec, index);
     }
 

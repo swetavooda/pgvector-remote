@@ -28,6 +28,7 @@ char* pinecone_create_host_from_spec(int dimensions, VectorMetric metric, char* 
 void pinecone_validate_host_schema(char* host, int dimensions, VectorMetric metric, Relation index);
 int pinecone_count_live(char* host);
 int pinecone_est_network_cost(void);
+void pinecone_spec_validator(char* spec);
 // bulk insert
 PreparedBulkInsert pinecone_begin_prepare_bulk_insert(Relation index);
 void pinecone_append_prepare_bulk_insert(PreparedBulkInsert prepared_vectors, TupleDesc tupdesc, Datum* values, bool* nulls, ItemPointer ctid);

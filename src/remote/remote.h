@@ -137,6 +137,7 @@ typedef void (*ri_validate_host_schema_function)(char* host, int dimensions, Vec
 typedef void (*ri_delete_all_function)(char* host);
 typedef int (*ri_count_live_function)(char* host);
 typedef int (*ri_est_network_cost_function)(void);
+typedef void (*ri_spec_validator_function)(const char *spec);
 // insert
 typedef PreparedBulkInsert (*ri_begin_prepare_bulk_insert_function)(Relation index);
 typedef void (*ri_append_prepare_bulk_insert_function)(PreparedBulkInsert prepared_vectors, TupleDesc tupdesc, Datum* values, bool* nulls, ItemPointer ctid);
@@ -155,6 +156,7 @@ typedef struct
     ri_delete_all_function delete_all;
     ri_count_live_function count_live;
     ri_est_network_cost_function est_network_cost;
+    ri_spec_validator_function spec_validator;
     // insert
     ri_begin_prepare_bulk_insert_function begin_prepare_bulk_insert;
     ri_append_prepare_bulk_insert_function append_prepare_bulk_insert;
