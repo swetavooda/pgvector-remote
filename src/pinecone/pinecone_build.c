@@ -53,15 +53,18 @@ IndexBuildResult *pinecone_build(Relation heap, Relation index, IndexInfo *index
     PineconeOptions *opts = (PineconeOptions *) index->rd_options;
     IndexBuildResult *result = palloc(sizeof(IndexBuildResult));
     VectorMetric metric = get_opclass_metric(index);
-    // Log spec.
-    pinecone_spec_validator(opts);
-    const char* spec = GET_STRING_RELOPTION(opts, spec);
-    cJSON* spec_json = cJSON_Parse(GET_STRING_RELOPTION(opts, spec));
-    int dimensions = TupleDescAttr(index->rd_att, 0)->atttypmod;
-    char* pinecone_index_name = get_pinecone_index_name(index);
-    char* host = GET_STRING_RELOPTION(opts, host);
+
+    cJSON* spec_json;
+    char* pinecone_index_name;
+    char* host;
+    int dimensions;
     cJSON* describe_index_response;
 
+    pinecone_spec_validator(opts);
+    spec_json = cJSON_Parse(GET_STRING_RELOPTION(opts, spec));
+    dimensions = TupleDescAttr(index->rd_att, 0)->atttypmod;
+    pinecone_index_name = get_pinecone_index_name(index);
+    host = GET_STRING_RELOPTION(opts, host);
     validate_api_key();
 
     // if the host is specified, check that it is empty
