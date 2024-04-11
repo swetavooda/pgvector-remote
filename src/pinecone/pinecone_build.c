@@ -94,15 +94,19 @@ IndexBuildResult *pinecone_build(Relation heap, Relation index, IndexInfo *index
         cJSON* index_stats_response;
         InsertBaseTable(heap, index, indexInfo, host, result);
 
-        if (!pinecone_use_mock_response) {
-            // wait for the remote index to finish processing the vectors
-            // i.e. describe stats is equal to result->index_tuples
-            index_stats_response = pinecone_get_index_stats(pinecone_api_key, host);
-            while (cJSON_GetObjectItemCaseSensitive(index_stats_response, "totalVectorCount")->valueint < result->index_tuples) {
-                sleep(1);
+        #ifdef PINECONE_MOCK {
+            if (!pinecone_use_mock_response) {
+        #endif
+                // wait for the remote index to finish processing the vectors
+                // i.e. describe stats is equal to result->index_tuples
                 index_stats_response = pinecone_get_index_stats(pinecone_api_key, host);
+                while (cJSON_GetObjectItemCaseSensitive(index_stats_response, "totalVectorCount")->valueint < result->index_tuples) {
+                    sleep(1);
+                    index_stats_response = pinecone_get_index_stats(pinecone_api_key, host);
+                }
+        #ifdef PINECONE_MOCK
             }
-        }
+        #endif
     }
     return result;
 }
