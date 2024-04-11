@@ -12,12 +12,14 @@ void validate_api_key(void) {
     }
 }
 
-void validate_vector_nonzero(Vector* vector) {
+bool validate_vector_nonzero(Vector* vector) {
     if (vector_eq_zero_internal(vector)) {
-        ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+        ereport(WARNING, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
                         errmsg("Invalid vector: zero vector"),
                         errhint("Pinecone insists that dense vectors cannot be zero in all dimensions. I don't know why they do this to you even when your metric isn't cosine.")));
+        return false;
     }
+    return true;
 }
 
 

@@ -153,6 +153,7 @@ void pinecone_build_callback(Relation index, ItemPointer tid, Datum *values, boo
     cJSON *json_vector;
     char* pinecone_id = pinecone_id_from_heap_tid(*tid);
     json_vector = tuple_get_pinecone_vector(itup_desc, values, isnull, pinecone_id);
+    if(json_vector==NULL) return;
     cJSON_AddItemToArray(buildstate->json_vectors, json_vector);
     if (cJSON_GetArraySize(buildstate->json_vectors) >= PINECONE_BATCH_SIZE) {
         pinecone_bulk_upsert(pinecone_api_key, buildstate->host, buildstate->json_vectors, pinecone_vectors_per_request);

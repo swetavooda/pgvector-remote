@@ -315,7 +315,7 @@ void load_buffer_into_sort(Relation index, PineconeScanOpaque so, Datum query_da
         page = BufferGetPage(buf);
 
         // add all tuples on the page to the sortstate
-        for (OffsetNumber offno = FirstOffsetNumber; offno <= PageGetMaxOffsetNumber(page); offno = OffsetNumberNext(offno)) {
+        for (OffsetNumber offno = FirstOffsetNumber; offno <= PageGetMaxOffsetNumber(page) && n_sortedtuple > pinecone_max_buffer_scan; offno = OffsetNumberNext(offno)) {
             // get the tid and the vector from the heap tuple
             ItemId itemid;
             Item item;

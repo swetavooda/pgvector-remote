@@ -12,8 +12,11 @@ cJSON* tuple_get_pinecone_vector(TupleDesc tup_desc, Datum *values, bool *isnull
     cJSON *metadata = cJSON_CreateObject();
     Vector *vector;
     cJSON *json_values;
+    bool isNonZero;
+
     vector = DatumGetVector(values[0]);
-    validate_vector_nonzero(vector);
+    isNonZero = validate_vector_nonzero(vector);
+    if(!isNonZero) return NULL;
     json_values = cJSON_CreateFloatArray(vector->x, vector->dim);
     // prepare metadata
     for (int i = 1; i < tup_desc->natts; i++) // skip the first column which is the vector
@@ -52,27 +55,6 @@ cJSON* tuple_get_pinecone_vector(TupleDesc tup_desc, Datum *values, bool *isnull
     return json_vector;
 }
 
-cJSON* index_tuple_get_pinecone_vector(Relation index, IndexTuple itup) {
-    int natts = index->rd_att->natts;
-    Datum *itup_values = (Datum *) palloc(sizeof(Datum) * natts);
-    bool *itup_isnull = (bool *) palloc(sizeof(bool) * natts);
-    TupleDesc itup_desc = index->rd_att;
-    char* vector_id;
-    index_deform_tuple(itup, itup_desc, itup_values, itup_isnull);
-    vector_id = pinecone_id_from_heap_tid(itup->t_tid);
-    return tuple_get_pinecone_vector(itup_desc, itup_values, itup_isnull, vector_id);
-}
-
-cJSON* heap_tuple_get_pinecone_vector(Relation heap, HeapTuple htup) {
-    int natts = heap->rd_att->natts;
-    Datum *htup_values = (Datum *) palloc(sizeof(Datum) * natts);
-    bool *htup_isnull = (bool *) palloc(sizeof(bool) * natts);
-    TupleDesc htup_desc = heap->rd_att;
-    char* vector_id;
-    heap_deform_tuple(htup, htup_desc, htup_values, htup_isnull);
-    vector_id = pinecone_id_from_heap_tid(htup->t_self);
-    return tuple_get_pinecone_vector(htup_desc, htup_values, htup_isnull, vector_id);
-}
 
 ItemPointerData pinecone_id_get_heap_tid(char *id)
 {

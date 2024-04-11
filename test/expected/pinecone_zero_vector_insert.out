@@ -7,6 +7,7 @@ SET client_min_messages = 'notice';
 -- flush each vector individually
 SET pinecone.vectors_per_request = 1;
 SET pinecone.requests_per_batch = 1;
+SET pinecone.max_buffer_scan = 0;
 -- disable flat scan to force use of the index
 SET enable_seqscan = off;
 -- CREATE TABLE
@@ -35,29 +36,105 @@ VALUES ('https://api.pinecone.io/indexes', 'POST', $${
 }$$);
 -- mock describe index stats
 INSERT INTO pinecone_mock (url_prefix, method, response)
-VALUES ('https://fakehost/describe_index_stats', 'GET', '{"namespaces":{},"dimension":3,"indexFullness":0,"totalVectorCount":0}');
-INSERT INTO t (id, val) VALUES (2, '[0,0,0]');
--- create index after insering 0 vector - Throws an error
-CREATE INDEX i2 ON t USING pinecone (val) WITH (spec = '{"serverless":{"cloud":"aws","region":"us-west-2"}}');
-ERROR:  Invalid vector: zero vector
-HINT:  Pinecone insists that dense vectors cannot be zero in all dimensions. I don't know why they do this to you even when your metric isn't cosine.
--- Truncate the table to remove the values for creating an index successfully
-TRUNCATE TABLE t;
+VALUES ('https://fakehost/describe_index_stats', 'GET', '{"namespaces":{},"dimension":3,"indexFullness":0,"totalVectorCount":2}');
+-- mock upsert
+INSERT INTO pinecone_mock (url_prefix, method, response)
+VALUES ('https://fakehost/vectors/upsert', 'POST', '{"upsertedCount":1}');
+-- mock query
+INSERT INTO pinecone_mock (url_prefix, method, response)
+VALUES ('https://fakehost/query', 'POST', $${
+        "results":      [],
+        "matches":      [{
+                        "id":   "000000000001",
+                        "score":        2,
+                        "values":       []
+                }],
+        "namespace":    "",
+        "usage":        {
+                "readUnits":    5
+        }
+}$$);
+-- mock fetch
+INSERT INTO pinecone_mock (url_prefix, method, response)
+VALUES ('https://fakehost/vectors/fetch', 'GET', $${
+        "code": 3,
+        "message":      "No IDs provided for fetch query",
+        "details":      []
+}$$);
 -- create index
 CREATE INDEX i2 ON t USING pinecone (val) WITH (spec = '{"serverless":{"cloud":"aws","region":"us-west-2"}}');
-INSERT INTO pinecone_mock (url_prefix, method, response)
-VALUES ('https://fakehost/vectors/upsert',
-'{ "vectors":	[{
-			"id":	"000000000001",
-			"values":	[100, 1, 1],
-			"metadata":	{
-			}
-		}]
-        }', 
-        '{"upsertedCount":1}'
-);
+-- insert vectors: throws warning while flushing zero-vector
 INSERT INTO t (id, val) VALUES (1, '[100,1,1]');
 INSERT INTO t (id, val) VALUES (2, '[0,0,0]');
-ERROR:  Invalid vector: zero vector
+INSERT INTO t (id, val) VALUES (3, '[10120,76,1]');
+WARNING:  Invalid vector: zero vector
 HINT:  Pinecone insists that dense vectors cannot be zero in all dimensions. I don't know why they do this to you even when your metric isn't cosine.
+WARNING:  No vectors to flush to pinecone
+-- returns only id = 1 as it is flushed to pinecone )zero vector not flushed to pinecone)
+SELECT * FROM t ORDER BY val <-> '[3,3,3]';
+NOTICE:  Buffer is too large
+HINT:  There are 0 tuples in the buffer that have not yet been flushed to pinecone and 2 tuples in pinecone that are not yet live. You may want to consider flushing the buffer.
+NOTICE:  Reached max local scan
+ id |    val    
+----+-----------
+  1 | [100,1,1]
+(1 row)
+
+SELECT * FROM t;
+ id |     val      
+----+--------------
+  1 | [100,1,1]
+  2 | [0,0,0]
+  3 | [10120,76,1]
+(3 rows)
+
+DROP INDEX i2;
+SELECT * FROM t ORDER BY val <-> '[3,3,3]';
+ id |     val      
+----+--------------
+  2 | [0,0,0]
+  1 | [100,1,1]
+  3 | [10120,76,1]
+(3 rows)
+
+DELETE FROM pinecone_mock
+WHERE url_prefix = 'https://fakehost/query' AND method = 'POST';
+INSERT INTO pinecone_mock (url_prefix, method, response)
+VALUES ('https://fakehost/query', 'POST', $${
+        "results":      [],
+        "matches":      [{
+                        "id":   "000000000001",
+                        "score":        2,
+                        "values":       []
+                },
+                {
+                        "id":   "000000000003",
+                        "score":        2,
+                        "values":       []
+                }],
+        "namespace":    "",
+        "usage":        {
+                "readUnits":    5
+        }
+}$$);
+-- displays warning while flushing zero vector to pinecone
+CREATE INDEX i2 ON t USING pinecone (val) WITH (spec = '{"serverless":{"cloud":"aws","region":"us-west-2"}}');
+WARNING:  Invalid vector: zero vector
+HINT:  Pinecone insists that dense vectors cannot be zero in all dimensions. I don't know why they do this to you even when your metric isn't cosine.
+SELECT * FROM t ORDER BY val <-> '[3,3,3]';
+NOTICE:  Reached max local scan
+ id |     val      
+----+--------------
+  1 | [100,1,1]
+  3 | [10120,76,1]
+(2 rows)
+
+SELECT * FROM t;
+ id |     val      
+----+--------------
+  1 | [100,1,1]
+  2 | [0,0,0]
+  3 | [10120,76,1]
+(3 rows)
+
 DROP TABLE t;
