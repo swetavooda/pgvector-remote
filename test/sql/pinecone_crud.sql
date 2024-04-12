@@ -2,10 +2,13 @@
 -- suppress output
 \o /dev/null
 -- logging level
+\o /dev/null
+delete from pinecone_mock;
 SET client_min_messages = 'notice';
 -- flush each vector individually
 SET pinecone.vectors_per_request = 1;
 SET pinecone.requests_per_batch = 1;
+SET pinecone.max_buffer_scan = 1000;
 -- disable flat scan to force use of the index
 SET enable_seqscan = off;
 -- Testing database is responsible for initializing the mock table with 
