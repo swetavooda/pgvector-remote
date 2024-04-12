@@ -1,4 +1,5 @@
 SET enable_seqscan = off;
+SET client_min_messages = 'notice';
 ALTER SYSTEM RESET pinecone.api_key;
 SELECT pg_reload_conf();
  pg_reload_conf 
@@ -10,7 +11,7 @@ CREATE TABLE t (val vector(3));
 CREATE INDEX i2 ON t USING pinecone (val) WITH (spec = '{"serverless":{"cloud":"aws","region":"us-west-2"}}');
 ERROR:  Pinecone API key not set
 HINT:  Set the pinecone API key using the pinecone.api_key GUC. E.g. ALTER SYSTEM SET pinecone.api_key TO 'your-api-key'
-ALTER SYSTEM SET pinecone.api_key = '5b2c1031-ba58-4acc-a634-9f943d68822c';
+ALTER SYSTEM SET pinecone.api_key = 'fake-key';
 SELECT pg_reload_conf();
  pg_reload_conf 
 ----------------
@@ -18,5 +19,7 @@ SELECT pg_reload_conf();
 (1 row)
 
 CREATE INDEX i2 ON t USING pinecone (val);
-ERROR:  Spec cannot be empty
+ERROR:  Invalid spec
+HINT:  Spec should be a valid JSON object e.g. WITH (spec='{"serverless":{"cloud":"aws","region":"us-west-2"}}').
+                          Refer to https://docs.pinecone.io/reference/create_index
 DROP TABLE t;

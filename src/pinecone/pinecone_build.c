@@ -53,12 +53,18 @@ IndexBuildResult *pinecone_build(Relation heap, Relation index, IndexInfo *index
     PineconeOptions *opts = (PineconeOptions *) index->rd_options;
     IndexBuildResult *result = palloc(sizeof(IndexBuildResult));
     VectorMetric metric = get_opclass_metric(index);
-    cJSON* spec_json = cJSON_Parse(GET_STRING_RELOPTION(opts, spec));
-    int dimensions = TupleDescAttr(index->rd_att, 0)->atttypmod;
-    char* pinecone_index_name = get_pinecone_index_name(index);
-    char* host = GET_STRING_RELOPTION(opts, host);
+
+    cJSON* spec_json;
+    char* pinecone_index_name;
+    char* host;
+    int dimensions;
     cJSON* describe_index_response;
 
+    pinecone_spec_validator(opts);
+    spec_json = cJSON_Parse(GET_STRING_RELOPTION(opts, spec));
+    dimensions = TupleDescAttr(index->rd_att, 0)->atttypmod;
+    pinecone_index_name = get_pinecone_index_name(index);
+    host = GET_STRING_RELOPTION(opts, host);
     validate_api_key();
 
     // if the host is specified, check that it is empty
@@ -93,13 +99,20 @@ IndexBuildResult *pinecone_build(Relation heap, Relation index, IndexInfo *index
     } else {
         cJSON* index_stats_response;
         InsertBaseTable(heap, index, indexInfo, host, result);
-        // wait for the remote index to finish processing the vectors
-        // i.e. describe stats is equal to result->index_tuples
-        index_stats_response = pinecone_get_index_stats(pinecone_api_key, host);
-        while (cJSON_GetObjectItemCaseSensitive(index_stats_response, "totalVectorCount")->valueint < result->index_tuples) {
-            sleep(1);
-            index_stats_response = pinecone_get_index_stats(pinecone_api_key, host);
-        }
+
+        #ifdef PINECONE_MOCK
+            if (!pinecone_use_mock_response) {
+        #endif
+                // wait for the remote index to finish processing the vectors
+                // i.e. describe stats is equal to result->index_tuples
+                index_stats_response = pinecone_get_index_stats(pinecone_api_key, host);
+                while (cJSON_GetObjectItemCaseSensitive(index_stats_response, "totalVectorCount")->valueint < result->index_tuples) {
+                    sleep(1);
+                    index_stats_response = pinecone_get_index_stats(pinecone_api_key, host);
+                }
+        #ifdef PINECONE_MOCK
+            }
+        #endif
     }
     return result;
 }
@@ -125,6 +138,7 @@ char* CreatePineconeIndexAndWait(Relation index, cJSON* spec_json, VectorMetric 
         sleep(1);
         create_response = describe_index(pinecone_api_key, pinecone_index_name);
     }
+    sleep(1); // TODO: ping the host with get_index_stats instead of pinging pinecone.io with describe_index
     return host;
 }
 

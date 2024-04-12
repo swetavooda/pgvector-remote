@@ -200,7 +200,7 @@ IndexBulkDeleteResult *pinecone_bulkdelete(IndexVacuumInfo *info, IndexBulkDelet
 IndexBulkDeleteResult *no_vacuumcleanup(IndexVacuumInfo *info, IndexBulkDeleteResult *stats);
 
 // validate
-void pinecone_spec_validator(const char *spec);
+void pinecone_spec_validator(const PineconeOptions *opts);
 void pinecone_host_validator(const char *spec);
 void validate_api_key(void);
 bool validate_vector_nonzero(Vector* vector);

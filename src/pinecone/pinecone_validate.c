@@ -23,16 +23,15 @@ bool validate_vector_nonzero(Vector* vector) {
 }
 
 
-void pinecone_spec_validator(const char *spec)
+void pinecone_spec_validator(const PineconeOptions *opts)
 {
-    bool empty = strcmp(spec, "") == 0;
-    if (empty || cJSON_Parse(spec) == NULL)
+    if (opts == NULL || cJSON_Parse(GET_STRING_RELOPTION(opts, spec)) == NULL || strcmp(GET_STRING_RELOPTION(opts, spec), "") == 0)
     {
         ereport(ERROR,
                 (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-                (empty ? errmsg("Spec cannot be empty") : errmsg("Invalid spec: %s", spec)),
-                errhint("Spec should be a valid JSON object e.g. WITH (spec='{\"serverless\":{\"cloud\":\"aws\",\"region\":\"us-west-2\"}}').\n \
-                        Refer to https://docs.pinecone.io/reference/create_index")));
+                 errmsg("Invalid spec"),
+                 errhint("Spec should be a valid JSON object e.g. WITH (spec='{\"serverless\":{\"cloud\":\"aws\",\"region\":\"us-west-2\"}}').\n \
+                         Refer to https://docs.pinecone.io/reference/create_index")));
     }
 }
 
