@@ -13,4 +13,9 @@ bool pinecone_bulk_upsert(char* host, PreparedTuple* prepared_vectors, int remot
 cJSON** pinecone_query_with_fetch(char* host, int top_k, cJSON* query_vector_values, cJSON* filter, bool include_vector_ids, cJSON* fetch_ids);
 PreparedTuple pinecone_prepare_tuple_for_bulk_insert(TupleDesc tupdesc, Datum* values, bool* nulls, ItemPointer ctid);
 
+// utils
+
+ItemPointerData pinecone_id_get_heap_tid(char *id);
+char* pinecone_id_from_heap_tid(ItemPointerData heap_tid);
+
 #endif // PINECONE_CLIENT_H

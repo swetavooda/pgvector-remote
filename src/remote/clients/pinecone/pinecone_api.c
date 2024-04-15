@@ -190,7 +190,7 @@ cJSON* remote_create_index(const char *api_key, const char *index_name, const in
 }
 
 CURL* multi_hnd_for_query;
-cJSON** remote_query_with_fetch(const char *api_key, const char *index_host, const int topK, cJSON *query_vector_values, cJSON *filter, bool with_fetch, cJSON* fetch_ids) {
+cJSON** remote_query_with_fetch(const char *api_key, const char *index_host, cJSON* request_body, bool with_fetch, cJSON* fetch_ids) {
     CURL *query_handle, *fetch_handle;
     cJSON** responses = palloc(2 * sizeof(cJSON*)); // allocate space to return two cJSON* pointers for the query and fetch responses
     ResponseData query_response_data = {"", NULL, NULL, 0, ""};
@@ -207,7 +207,7 @@ cJSON** remote_query_with_fetch(const char *api_key, const char *index_host, con
         }
     }
 
-    query_handle = get_remote_query_handle(api_key, index_host, topK, query_vector_values, filter, &query_response_data);
+    query_handle = get_remote_query_handle(api_key, index_host, request_body, &query_response_data);
     curl_multi_add_handle(multi_hnd_for_query, query_handle);
 
     if (with_fetch) {
@@ -333,8 +333,7 @@ cJSON* remote_bulk_upsert(const char *api_key, const char *index_host, cJSON *ve
 }
 
 CURL* query_handle;
-CURL* get_remote_query_handle(const char *api_key, const char *index_host, const int topK, cJSON *query_vector_values, cJSON *filter, ResponseData* response_data) {
-    cJSON *body = cJSON_CreateObject();
+CURL* get_remote_query_handle(const char *api_key, const char *index_host, cJSON* request_body, ResponseData* response_data) {
     char* body_str;
     char url[100] = "https://"; strcat(url, index_host); strcat(url, "/query"); // e.g. https://t1-23kshha.svc.apw5-4e34-81fa.pinecone.io/query
     if (query_handle == NULL) {
@@ -343,15 +342,10 @@ CURL* get_remote_query_handle(const char *api_key, const char *index_host, const
             elog(ERROR, "Failed to initialize CURL handle");
         }
     }
-    cJSON_AddItemToObject(body, "topK", cJSON_CreateNumber(topK));
-    cJSON_AddItemToObject(body, "vector", query_vector_values);
-    cJSON_AddItemToObject(body, "filter", filter);
-    cJSON_AddItemToObject(body, "includeValues", cJSON_CreateFalse());
-    cJSON_AddItemToObject(body, "includeMetadata", cJSON_CreateFalse());
     query_handle = curl_easy_init();
-    body_str = cJSON_Print(body);
+    body_str = cJSON_Print(request_body);
     elog(DEBUG1, "Querying index %s with payload: %s", index_host, body_str);
-    cJSON_Delete(body);
+    cJSON_Delete(request_body);
     // 
     strcpy(response_data->message, "querying index");
     response_data->request_body = body_str;

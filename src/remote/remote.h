@@ -50,18 +50,15 @@ typedef char* PreparedQuery;
 typedef struct RemoteScanOpaqueData
 {
     int dimensions;
-    VectorMetric metric;
     bool first;
 
     // sorting
-    Tuplesortstate *sortstate;
-    TupleDesc tupdesc;
-    TupleTableSlot *slot; // TODO ??
-    bool isnull;
-    bool more_buffer_tuples;
-
-    // support functions
-    FmgrInfo *procinfo;
+    ItemPointerData *local_tids, *remote_tids;
+    FmgrInfo *procinfo; // distance function
+    TupleDesc sort_tupdesc; // tuple descriptor for sorting (distance float4, tid TID)
+    Tuplesortstate *local_sortstate, *remote_sortstate;
+    TupleTableSlot *local_sortslot, *remote_sortslot;
+    bool more_local_tuples, more_remote_tuples;
 
 } RemoteScanOpaqueData;
 typedef RemoteScanOpaqueData *RemoteScanOpaque;
@@ -231,7 +228,7 @@ IndexScanDesc remote_beginscan(Relation index, int nkeys, int norderbys);
 cJSON* remote_build_filter(Relation index, ScanKey keys, int nkeys);
 void remote_rescan(IndexScanDesc scan, ScanKey keys, int nkeys, ScanKey orderbys, int norderbys);
 ItemPointerData* buffer_get_tids(Relation index);
-void load_tids_into_sort(Relation index, RemoteScanOpaque so, Datum query_datum, TupleDesc index_tupdesc, ItemPointerData* tids, int n_tids);
+void load_tids_into_sort(Relation index, Tuplesortstate *sortstate, RemoteScanOpaque so, Datum query_datum, ItemPointerData* tids, int n_tids);
 bool remote_gettuple(IndexScanDesc scan, ScanDirection dir);
 void no_endscan(IndexScanDesc scan);
 RemoteCheckpoint* get_checkpoints_to_fetch(Relation index, int* n_checkpoints);

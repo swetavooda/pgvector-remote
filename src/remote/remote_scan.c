@@ -95,85 +95,20 @@ IndexScanDesc remote_beginscan(Relation index, int nkeys, int norderbys)
     so->procinfo = index_getprocinfo(index, 1, 1); // lookup the first support function in the opclass for the first attribute
 
     // create tuple description for sorting
-    so->tupdesc = CreateTemplateTupleDesc(2);
-    TupleDescInitEntry(so->tupdesc, (AttrNumber) 1, "distance", FLOAT8OID, -1, 0);
-    TupleDescInitEntry(so->tupdesc, (AttrNumber) 2, "heaptid", TIDOID, -1, 0);
+    so->sort_tupdesc = CreateTemplateTupleDesc(2);
+    TupleDescInitEntry(so->sort_tupdesc, (AttrNumber) 1, "distance", FLOAT8OID, -1, 0);
+    TupleDescInitEntry(so->sort_tupdesc, (AttrNumber) 2, "heaptid", TIDOID, -1, 0);
 
-    // prep sort
-    // allocate 6MB for the heapsort
-    so->sortstate = tuplesort_begin_heap(so->tupdesc, 2, attNums, sortOperators, sortCollations, nullsFirstFlags, 6000, NULL, false);
-    so->slot = MakeSingleTupleTableSlot(so->tupdesc, &TTSOpsMinimalTuple);
+    // allocate 600KB for the heapsort max 20K tuples each of 20 bytes is 400KB (each tuple has two datums = 8B + header)
+    so->local_sortstate = tuplesort_begin_heap(so->sort_tupdesc, 2, attNums, sortOperators, sortCollations, nullsFirstFlags, 600, NULL, false);
+    so->remote_sortstate = tuplesort_begin_heap(so->sort_tupdesc, 2, attNums, sortOperators, sortCollations, nullsFirstFlags, 600, NULL, false);
+    // these slots hold the top result from the sortstate
+    so->local_sortslot = MakeSingleTupleTableSlot(so->sort_tupdesc, &TTSOpsMinimalTuple);
+    so->remote_sortslot = MakeSingleTupleTableSlot(so->sort_tupdesc, &TTSOpsMinimalTuple);
     
     scan->opaque = so;
     return scan;
 }
-
-
-cJSON* remote_build_filter(Relation index, ScanKey keys, int nkeys) {
-    cJSON *filter = cJSON_CreateObject();
-    cJSON *and_list = cJSON_CreateArray();
-    const char* remote_filter_operators[] = {"$lt", "$lte", "$eq", "$gte", "$gt", "$ne", "$in"};
-    for (int i = 0; i < nkeys; i++)
-    {
-        cJSON *key_filter = cJSON_CreateObject();
-        cJSON *condition = cJSON_CreateObject();
-        cJSON *condition_value = NULL;
-        FormData_pg_attribute* td = TupleDescAttr(index->rd_att, keys[i].sk_attno - 1);
-
-        if (td->atttypid == TEXTARRAYOID && keys[i].sk_strategy == REMOTE_STRATEGY_ARRAY_CONTAINS) {
-            // contains (list_of_strings @> ARRAY[tag1, tag2])
-            // $and: [ {list_of_strings: {$in: [tag1]}}, {list_of_strings: {$in: [tag2]}} ]
-            cJSON* tags = text_array_get_json(keys[i].sk_argument);
-            cJSON* tag;
-            cJSON_ArrayForEach(tag, tags) {
-                cJSON* condition_contains_tag = cJSON_CreateObject(); // list_of_strings: {$in: [tag1]}
-                cJSON* predicate_contains_tag = cJSON_CreateObject(); // {$in: [tag1]}
-                cJSON* single_tag_list = cJSON_CreateArray(); // [tag1]
-                cJSON_AddItemToArray(single_tag_list, cJSON_Duplicate(tag, true)); // [tag1]
-                cJSON_AddItemToObject(predicate_contains_tag, "$in", single_tag_list); // {$in: [tag1]}
-                cJSON_AddItemToObject(condition_contains_tag, td->attname.data, predicate_contains_tag); // list_of_strings: {$in: [tag1]}
-                cJSON_AddItemToArray(and_list, condition_contains_tag);
-            }
-            // cJSON_Delete(tags);
-        } else {
-            switch (td->atttypid)
-            {
-                case BOOLOID:
-                    condition_value = cJSON_CreateBool(DatumGetBool(keys[i].sk_argument));
-                    break;
-                case FLOAT8OID:
-                    condition_value = cJSON_CreateNumber(DatumGetFloat8(keys[i].sk_argument));
-                    break;
-                case TEXTOID:
-                    condition_value = cJSON_CreateString(text_to_cstring(DatumGetTextP(keys[i].sk_argument)));
-                    break;
-                case TEXTARRAYOID:
-                    // overlap
-                    if (keys[i].sk_strategy != REMOTE_STRATEGY_ARRAY_OVERLAP) {
-                        ereport(ERROR,
-                                (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-                                 errmsg("Unsupported operator for text[] datatype. Must be && (overlap)")));
-                    }
-                    condition_value = text_array_get_json(keys[i].sk_argument);
-                    break;
-                    // contains (list_of_strings @> ARRAY[tag1, tag2])
-                    // $and: [ {list_of_strings: {$in: [tag1]}}, {list_of_strings: {$in: [tag2]}} ]
-                default:
-                    ereport(ERROR,
-                            (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-                             errmsg("Unsupported datatype for remote index scan. Must be one of bool, float8, text, text[]")));
-                    break;
-            }
-            // this only works if all datatypes use the same strategy naming convention. todo: document this
-            cJSON_AddItemToObject(condition, remote_filter_operators[keys[i].sk_strategy - 1], condition_value);
-            cJSON_AddItemToObject(key_filter, td->attname.data, condition);
-            cJSON_AddItemToArray(and_list, key_filter);
-        }
-    }
-    cJSON_AddItemToObject(filter, "$and", and_list);
-    return filter;
-}
-
 
 /*
  * Start or restart an index scan
@@ -187,14 +122,12 @@ void remote_rescan(IndexScanDesc scan, ScanKey keys, int nkeys, ScanKey orderbys
     Datum query_datum;
     RemoteStaticMetaPageData remote_metadata = RemoteSnapshotStaticMeta(scan->indexRelation);
     RemoteScanOpaque so = (RemoteScanOpaque) scan->opaque;
-    TupleDesc tupdesc = RelationGetDescr(scan->indexRelation); // used for accessing
     //
     Relation index = scan->indexRelation;
     RemoteOptions *options = (RemoteOptions *) index->rd_options;
     RemoteIndexInterface* remote_index_interface = remote_index_interfaces[options->provider];
     PreparedQuery query;
     int n_checkpoints;
-    ItemPointerData* remote_tids = palloc(sizeof(ItemPointerData) * remote_top_k); // remote top-k ctids
 
     // check that the ORDER BY is on the first column (which is assumed to be a column on vectors)
     if (scan->numberOfOrderBys == 0 || orderbys[0].sk_attno != 1) {
@@ -205,16 +138,11 @@ void remote_rescan(IndexScanDesc scan, ScanKey keys, int nkeys, ScanKey orderbys
     query_datum = orderbys[0].sk_argument;
     vec = DatumGetVector(query_datum);
     fetch_checkpoints = get_checkpoints_to_fetch(scan->indexRelation, &n_checkpoints);
-    query = remote_index_interface->prepare_query(scan->indexRelation, keys, nkeys, vec);
-    remote_tids = remote_index_interface->query_with_fetch(remote_metadata.host, remote_top_k, query, true, fetch_checkpoints, n_checkpoints, &best_checkpoint);
+    query = remote_index_interface->prepare_query(scan->indexRelation, keys, nkeys, vec, remote_top_k);
+    so->remote_tids = remote_index_interface->query_with_fetch(remote_metadata.host, query, remote_top_k, true, fetch_checkpoints, n_checkpoints, &best_checkpoint);
 
     // set the remote_ready_page to the best checkpoint
-    if (best_checkpoint.is_checkpoint) {
-        set_buffer_meta_page(scan->indexRelation, &best_checkpoint, NULL, NULL, NULL, NULL);
-    }
-
-    // copy metric
-    so->metric = remote_metadata.metric;
+    if (best_checkpoint.is_checkpoint) set_buffer_meta_page(scan->indexRelation, &best_checkpoint, NULL, NULL, NULL, NULL);
 
     /* Requires MVCC-compliant snapshot as not able to pin during sorting */
     /* https://www.postgresql.org/docs/current/index-locking.html */
@@ -222,14 +150,16 @@ void remote_rescan(IndexScanDesc scan, ScanKey keys, int nkeys, ScanKey orderbys
         elog(ERROR, "non-MVCC snapshots are not supported with remote");
 
     // get the ctids from the buffer
-    ItemPointerData* buffer_tids = buffer_get_tids(scan->indexRelation);
+    so->local_tids = buffer_get_tids(scan->indexRelation);
 
+    // sort the tids
+    load_tids_into_sort(index, so->remote_sortstate, so, query_datum, so->remote_tids, remote_top_k);
+    load_tids_into_sort(index, so->local_sortstate, so, query_datum, so->local_tids, remote_max_buffer_scan);
 
-    // locally scan the buffer and add them to the sort state
-    load_buffer_into_sort(scan->indexRelation, so, query_datum, tupdesc);
+    // get the first tuple
+    so->more_local_tuples = tuplesort_gettupleslot(so->local_sortstate, true, false, so->local_sortslot, NULL);
+    so->more_remote_tuples = tuplesort_gettupleslot(so->remote_sortstate, true, false, so->remote_sortslot, NULL);
 
-    // TODO: add the remote results to the sort state
-    
     // allocate for xs_orderbyvals (*Datum)
     scan->xs_orderbyvals = palloc(sizeof(Datum)); // assumes only one ORDER BY
     scan->xs_orderbynulls = palloc(sizeof(bool)); // TODO: assumes only one ORDER BY
@@ -238,9 +168,9 @@ void remote_rescan(IndexScanDesc scan, ScanKey keys, int nkeys, ScanKey orderbys
 
 // todo: save stats from inserting from base table into the meta
 
-void load_tids_into_sort(Relation index, RemoteScanOpaque so, Datum query_datum, TupleDesc index_tupdesc, ItemPointerData* tids, int n_tids) {
+void load_tids_into_sort(Relation index, Tuplesortstate *sortstate, RemoteScanOpaque so, Datum query_datum, ItemPointerData* tids, int n_tids) {
     // todo: make sure that this is just as fast as pgvector's flatscan e.g. using vectorized operations
-    TupleTableSlot *slot = MakeSingleTupleTableSlot(so->tupdesc, &TTSOpsVirtual);
+    TupleTableSlot *slot = MakeSingleTupleTableSlot(so->sort_tupdesc, &TTSOpsVirtual);
 
     // index info
     IndexInfo *indexInfo = BuildIndexInfo(index);
@@ -252,7 +182,7 @@ void load_tids_into_sort(Relation index, RemoteScanOpaque so, Datum query_datum,
     Relation baseTableRel = RelationIdGetRelation(baseTableOid);
     Snapshot snapshot = GetActiveSnapshot();
 
-    // begin the index fetch (this the preferred way for an index to request tuples from its base table)
+    // begin the index fetch (this is the preferred way for an index to request tuples from its base table)
     IndexFetchTableData *fetchData = baseTableRel->rd_tableam->index_fetch_begin(baseTableRel);
     TupleTableSlot *base_table_slot = MakeSingleTupleTableSlot(baseTableRel->rd_att, &TTSOpsBufferHeapTuple);
     bool call_again, all_dead, found;
@@ -278,7 +208,7 @@ void load_tids_into_sort(Relation index, RemoteScanOpaque so, Datum query_datum,
         slot->tts_isnull[1] = false;
         ExecStoreVirtualTuple(slot);
 
-        tuplesort_puttupleslot(so->sortstate, slot);
+        tuplesort_puttupleslot(sortstate, slot);
     }
 
     // end the index fetch
@@ -287,10 +217,7 @@ void load_tids_into_sort(Relation index, RemoteScanOpaque so, Datum query_datum,
     // close the base table
     RelationClose(baseTableRel);
 
-    tuplesort_performsort(so->sortstate);
-    
-    // get the first tuple from the sortstate
-    so->more_buffer_tuples = tuplesort_gettupleslot(so->sortstate, true, false, so->slot, NULL);
+    tuplesort_performsort(sortstate);
 }
 
 ItemPointerData* buffer_get_tids(Relation index)
@@ -348,50 +275,36 @@ ItemPointerData* buffer_get_tids(Relation index)
  */
 bool remote_gettuple(IndexScanDesc scan, ScanDirection dir)
 {
-	// interpret scan->opaque as a cJSON object
-	char *id_str;
-	ItemPointerData match_heaptid;
+    // TODO: scan.kill_prior_tuple tells us if the last tuple we returned is dead.
+    // We can use this to perform cleanup on the fly rather than waiting for vacuum.
     RemoteScanOpaque so = (RemoteScanOpaque) scan->opaque;
-    cJSON *match = so->remote_results;
-    double remote_best_dist, buffer_best_dist, dist, dist_lower_bound;
+    double remote_best_dist, local_best_dist;
+    ItemPointer local_tid, remote_tid;
     bool isnull;
-    float rel_tol = 0.15; // relative tolerance for distance recheck; TODO: this should depend on the metric; the inaccuracy arises from remote using half precision floats
 
-    elog(DEBUG1, "✓ remote_best_dist: %f, buffer_best_dist: %f", remote_best_dist, buffer_best_dist);
     // merge the results from the buffer and the remote index
-    if (match == NULL && !so->more_buffer_tuples) {
+    local_tid = so->more_local_tuples ? (ItemPointer) slot_getattr(so->local_sortslot, 2, &isnull) : NULL;
+    remote_tid = so->more_remote_tuples ? (ItemPointer) slot_getattr(so->remote_sortslot, 2, &isnull) : NULL;
+    if (local_tid != NULL && ItemPointerEquals(local_tid, remote_tid)) {
+        // skip local tuple if it is the same as remote
+        so->more_local_tuples = tuplesort_gettupleslot(so->local_sortstate, true, false, so->local_sortslot, NULL);
+        local_tid = so->more_local_tuples ? (ItemPointer) slot_getattr(so->local_sortslot, 2, &isnull) : NULL;
+    }
+    local_best_dist = so->more_local_tuples ? DatumGetFloat8(slot_getattr(so->local_sortslot, 1, &isnull)) : 0;
+    remote_best_dist = so->more_remote_tuples ? DatumGetFloat8(slot_getattr(so->remote_sortslot, 1, &isnull)) : 0;
+    
+    if (!so->more_local_tuples && !so->more_remote_tuples) { // no more tuples
         return false;
-    }
-    else if (buffer_best_dist < remote_best_dist) {
-        // use the buffer tuple
-        Datum blkno_datum = slot_getattr(so->slot, 2, &isnull);
-        Datum offset_datum = slot_getattr(so->slot, 3, &isnull);
-        dist = buffer_best_dist;
-        ItemPointerSetBlockNumber(&match_heaptid, blkno_datum);
-        ItemPointerSetOffsetNumber(&match_heaptid, offset_datum);
-        scan->xs_heaptid = match_heaptid;
+    } else if (!so->more_remote_tuples || local_best_dist < remote_best_dist) { // local tuple is better
+        scan->xs_heaptid = *local_tid;
         scan->xs_recheck = true;
-        // get the next tuple from the sortstate
-        so->more_buffer_tuples = tuplesort_gettupleslot(so->sortstate, true, false, so->slot, NULL);
+        so->more_local_tuples = tuplesort_gettupleslot(so->local_sortstate, true, false, so->local_sortslot, NULL);
+    } else { // remote tuple is better
+        scan->xs_heaptid = *remote_tid;
+        scan->xs_recheck = false;
+        so->more_remote_tuples = tuplesort_gettupleslot(so->remote_sortstate, true, false, so->remote_sortslot, NULL);
     }
-    else {
-        dist = remote_best_dist;
-        // get the id of the match // interpret the id as a string
-        id_str = cJSON_GetStringValue(cJSON_GetObjectItemCaseSensitive(match, "id"));
-        match_heaptid = remote_id_get_heap_tid(id_str);
-        scan->xs_heaptid = match_heaptid;
-        // TODO: create a datum out of the distance and retrun it to xs_orderbyvals
-        // NEXT
-        so->remote_results = so->remote_results->next;
-    }
-    // The recheck is going to compute vector<->query i.e. l2_distance, whereas for sorting we have been using l2_squared_distance
-    // we need to provide xs_recheck a lower bound on the l2_distance
-    dist_lower_bound = dist > 0 ? dist * (1 - rel_tol) : dist * (1 + rel_tol);
-    dist_lower_bound = sqrt(dist_lower_bound);
-    scan->xs_recheckorderby = true; // remote returns an approximate distance which we need to recheck.
-    scan->xs_orderbyvals[0] = Float8GetDatum((float8) dist_lower_bound);
-    scan->xs_orderbynulls[0] = false;
-    elog(DEBUG1, "dist: %f, dist_lower_bound: %f", dist, dist_lower_bound);
+    scan->xs_recheckorderby = false; // remote returns an approximate distance which we need to recheck.
     return true;
 }
 

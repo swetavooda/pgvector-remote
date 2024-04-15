@@ -1,8 +1,10 @@
 #include "remote/remote.h"
 #include "remote/rremote.h"
 #include "remote/clients/pinecone/pinecone.h"
-#include "remote/clients/pinecone/remote_api.h"
+#include "remote/clients/pinecone/pinecone_api.h"
 #include "postgres.h"
+
+#include "access/tupdesc.h"
 
 
 #include <stdio.h>
@@ -66,9 +68,107 @@ bool pinecone_bulk_upsert(char* host, PreparedTuple* prepared_vectors, int remot
     return false;
 }
 
-cJSON** pinecone_query_with_fetch(char* host, int top_k, cJSON* query_vector_values, cJSON* filter, bool include_vector_ids, cJSON* fetch_ids) {
-    cJSON** responses = remote_query_with_fetch(pinecone_api_key, host, top_k, query_vector_values, filter, include_vector_ids, fetch_ids);
-    return responses;
+
+PreparedQuery pinecone_prepare_query(Relation index, ScanKey keys, int nkeys, Vector* vec, int top_k) {
+    cJSON* filter = pinecone_build_filter(index, keys, nkeys);
+    cJSON* query_vector_values = cJSON_CreateFloatArray(vec->x, vec->dim);
+    cJSON* request_body = cJSON_CreateObject();
+    cJSON_AddItemToObject(request_body, "topK", cJSON_CreateNumber(top_k));
+    cJSON_AddItemToObject(request_body, "vector", query_vector_values);
+    cJSON_AddItemToObject(request_body, "filter", filter);
+    cJSON_AddItemToObject(request_body, "includeValues", cJSON_CreateFalse());
+    cJSON_AddItemToObject(request_body, "includeMetadata", cJSON_CreateFalse());
+    return (PreparedQuery) request_body;
+}
+
+cJSON* pinecone_build_filter(Relation index, ScanKey keys, int nkeys) {
+    cJSON *filter = cJSON_CreateObject();
+    cJSON *and_list = cJSON_CreateArray();
+    const char* remote_filter_operators[] = {"$lt", "$lte", "$eq", "$gte", "$gt", "$ne", "$in"};
+    for (int i = 0; i < nkeys; i++)
+    {
+        cJSON *key_filter = cJSON_CreateObject();
+        cJSON *condition = cJSON_CreateObject();
+        cJSON *condition_value = NULL;
+        FormData_pg_attribute* td = TupleDescAttr(index->rd_att, keys[i].sk_attno - 1);
+
+        if (td->atttypid == TEXTARRAYOID && keys[i].sk_strategy == REMOTE_STRATEGY_ARRAY_CONTAINS) {
+            // contains (list_of_strings @> ARRAY[tag1, tag2])
+            // $and: [ {list_of_strings: {$in: [tag1]}}, {list_of_strings: {$in: [tag2]}} ]
+            cJSON* tags = text_array_get_json(keys[i].sk_argument);
+            cJSON* tag;
+            cJSON_ArrayForEach(tag, tags) {
+                cJSON* condition_contains_tag = cJSON_CreateObject(); // list_of_strings: {$in: [tag1]}
+                cJSON* predicate_contains_tag = cJSON_CreateObject(); // {$in: [tag1]}
+                cJSON* single_tag_list = cJSON_CreateArray(); // [tag1]
+                cJSON_AddItemToArray(single_tag_list, cJSON_Duplicate(tag, true)); // [tag1]
+                cJSON_AddItemToObject(predicate_contains_tag, "$in", single_tag_list); // {$in: [tag1]}
+                cJSON_AddItemToObject(condition_contains_tag, td->attname.data, predicate_contains_tag); // list_of_strings: {$in: [tag1]}
+                cJSON_AddItemToArray(and_list, condition_contains_tag);
+            }
+            // cJSON_Delete(tags);
+        } else {
+            switch (td->atttypid)
+            {
+                case BOOLOID:
+                    condition_value = cJSON_CreateBool(DatumGetBool(keys[i].sk_argument));
+                    break;
+                case FLOAT8OID:
+                    condition_value = cJSON_CreateNumber(DatumGetFloat8(keys[i].sk_argument));
+                    break;
+                case TEXTOID:
+                    condition_value = cJSON_CreateString(text_to_cstring(DatumGetTextP(keys[i].sk_argument)));
+                    break;
+                case TEXTARRAYOID:
+                    // overlap
+                    if (keys[i].sk_strategy != REMOTE_STRATEGY_ARRAY_OVERLAP) {
+                        ereport(ERROR,
+                                (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+                                 errmsg("Unsupported operator for text[] datatype. Must be && (overlap)")));
+                    }
+                    condition_value = text_array_get_json(keys[i].sk_argument);
+                    break;
+                    // contains (list_of_strings @> ARRAY[tag1, tag2])
+                    // $and: [ {list_of_strings: {$in: [tag1]}}, {list_of_strings: {$in: [tag2]}} ]
+                default:
+                    ereport(ERROR,
+                            (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+                             errmsg("Unsupported datatype for remote index scan. Must be one of bool, float8, text, text[]")));
+                    break;
+            }
+            // this only works if all datatypes use the same strategy naming convention. todo: document this
+            cJSON_AddItemToObject(condition, remote_filter_operators[keys[i].sk_strategy - 1], condition_value);
+            cJSON_AddItemToObject(key_filter, td->attname.data, condition);
+            cJSON_AddItemToArray(and_list, key_filter);
+        }
+    }
+    cJSON_AddItemToObject(filter, "$and", and_list);
+    return filter;
+}
+
+
+// prepare query
+
+ItemPointerData* pinecone_query_with_fetch(char* host, int top_k, PreparedQuery query, int top_k, bool include_vector_ids, RemoteCheckpoint* checkpoints, int n_checkpoints, RemoteCheckpoint* best_checkpoint_return) {
+    cJSON* request_body = (cJSON*) query;
+    cJSON** responses = remote_query_with_fetch(pinecone_api_key, host, top_k, request_body, include_vector_ids, fetch_ids);
+    ItemPointerData *results = palloc0(sizeof(ItemPointerData) * top_k); // 0 is an invalid ItemPointerData
+    // find the best checkpoint
+    cJSON* fetch_response = responses[1];
+    *best_checkpoint_return = checkpoints[0]; // TODO: get the actual best checkpoint // it might be easier to just return an arr of known visible cpoints
+    // extract the ctids from the response
+    cJSON* query_response = responses[0];
+    cJSON* matches = cJSON_GetObjectItemCaseSensitive(query_response, "matches");
+    cJSON* match = matches->child;
+    int n = 0;
+    while (match != NULL) {
+        cJSON* vector_id = cJSON_GetObjectItemCaseSensitive(match, "id");
+        char* remote_id = cJSON_GetStringValue(vector_id);
+        ItemPointerData ctid = pinecone_id_get_heap_tid(remote_id);
+        results[n++] = ctid;
+        match = match->next;
+    }
+    return results;
 }
 
 PreparedTuple pinecone_prepare_tuple_for_bulk_insert(TupleDesc tupdesc, Datum* values, bool* nulls, ItemPointer ctid) {

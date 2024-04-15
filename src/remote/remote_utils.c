@@ -74,27 +74,6 @@ cJSON* heap_tuple_get_remote_vector(Relation heap, HeapTuple htup) {
     return tuple_get_remote_vector(htup_desc, htup_values, htup_isnull, vector_id);
 }
 
-ItemPointerData remote_id_get_heap_tid(char *id)
-{
-    ItemPointerData heap_tid;
-    int n_matched;
-    n_matched = sscanf(id, "%04hx%04hx%04hx", &heap_tid.ip_blkid.bi_hi, &heap_tid.ip_blkid.bi_lo, &heap_tid.ip_posid);
-    if (n_matched != 3) {
-        ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-                        errmsg("Invalid vector id"),
-                        errhint("Vector id should be a 12-character hexadecimal string")));
-    }
-    return heap_tid;
-}
-
-char* remote_id_from_heap_tid(ItemPointerData heap_tid)
-{
-    char* id = palloc(12 + 1);
-    snprintf(id, 12 + 1, "%04hx%04hx%04hx", heap_tid.ip_blkid.bi_hi, heap_tid.ip_blkid.bi_lo, heap_tid.ip_posid);
-    return id;
-}
-
-
 
 RemoteStaticMetaPageData RemoteSnapshotStaticMeta(Relation index)
 {
@@ -218,39 +197,6 @@ void remote_print_relation(Relation index) {
         RemoteBufferOpaqueData buffer_opaque = RemoteSnapshotBufferOpaque(index, blkno);
         elog(INFO, "\nBuffer Opaque Page %d: %s", blkno, buffer_opaque_to_string(buffer_opaque));
     }
-}
-
-
-// murmur hash lifted from hnswutils.c
-uint64
-murmurhash64(uint64 data)
-{
-	uint64		h = data;
-
-	h ^= h >> 33;
-	h *= 0xff51afd7ed558ccd;
-	h ^= h >> 33;
-	h *= 0xc4ceb9fe1a85ec53;
-	h ^= h >> 33;
-
-	return h;
-}
-
-/* TID hash table */
-uint32
-hash_tid(ItemPointerData tid, int seed)
-{
-	union
-	{
-		uint64		i;
-		ItemPointerData tid;
-	}			x;
-
-	/* Initialize unused bytes */
-	x.i = 0;
-	x.tid = tid;
-
-	return murmurhash64(x.i + seed);
 }
 
 /* text_array_get_json */
