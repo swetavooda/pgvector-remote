@@ -1,4 +1,3 @@
-#include "src/remote/clients/pinecone/remote_api.h"
 #include "remote.h"
 
 #include <storage/bufmgr.h>
@@ -44,39 +43,6 @@ RemoteCheckpoint* get_checkpoints_to_fetch(Relation index, int* n_checkpoints_re
     return checkpoints;
 }
 
-RemoteCheckpoint get_best_fetched_checkpoint(Relation index, RemoteCheckpoint* checkpoints, cJSON* fetch_results) {
-    // find the latest checkpoint that has was fetched (i.e. is in fetch_results)
-    // todo: add timestamping so that we can assume that if the remote page is sufficiently old, we can assume it is live. (simple)
-
-    // preprocess the results from a json object to a list of ItemPointerData
-    RemoteCheckpoint invalid_checkpoint = {INVALID_CHECKPOINT_NUMBER, InvalidBlockNumber, {{0, 0},0}, 0, false};
-    cJSON* vectors = cJSON_GetObjectItemCaseSensitive(fetch_results, "vectors");
-    cJSON* vector;
-    int n_fetched = cJSON_GetArraySize(vectors);
-    ItemPointerData* fetched_tids = palloc(sizeof(ItemPointerData) * n_fetched);
-    int k = 0;
-
-    cJSON_ArrayForEach(vector, vectors) {
-        char* id_str = vector->string;
-        fetched_tids[k++] = remote_id_get_heap_tid(id_str);
-    }
-    // log fetched tids
-    for (int i = 0; i < n_fetched; i++) {
-        elog(DEBUG1, "fetched tid: %s", remote_id_from_heap_tid(fetched_tids[i]));
-    }
-
-    // the checkpoints are listed in reverse chronological order, so we can return the first checkpoint that is in fetch_results
-    for (int i = 0; checkpoints[i].is_checkpoint; i++) {
-        // search for the checkpoint in the fetched tids
-        for (int j = 0; j < n_fetched; j++) {
-            if (ItemPointerEquals(&checkpoints[i].tid, &fetched_tids[j])) {
-                return checkpoints[i];
-            }
-        }
-    }
-    return invalid_checkpoint;
-}
-
 /*
  * Prepare for an index scan
  */
@@ -116,7 +82,6 @@ IndexScanDesc remote_beginscan(Relation index, int nkeys, int norderbys)
 void remote_rescan(IndexScanDesc scan, ScanKey keys, int nkeys, ScanKey orderbys, int norderbys)
 {
 	Vector * vec;
-	// cJSON *remote_response;
     RemoteCheckpoint* fetch_checkpoints;
     RemoteCheckpoint best_checkpoint;
     Datum query_datum;
@@ -128,18 +93,24 @@ void remote_rescan(IndexScanDesc scan, ScanKey keys, int nkeys, ScanKey orderbys
     RemoteIndexInterface* remote_index_interface = remote_index_interfaces[options->provider];
     PreparedQuery query;
     int n_checkpoints;
+    int n_local_tids, n_remote_tids;
 
     // check that the ORDER BY is on the first column (which is assumed to be a column on vectors)
     if (scan->numberOfOrderBys == 0 || orderbys[0].sk_attno != 1) {
         ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED), errmsg("Index must be ordered by the first column")));
     }
-    
+
 	// get the query vector
     query_datum = orderbys[0].sk_argument;
     vec = DatumGetVector(query_datum);
+
+    
+    // query the vector index and update the liveness pointer
     fetch_checkpoints = get_checkpoints_to_fetch(scan->indexRelation, &n_checkpoints);
     query = remote_index_interface->prepare_query(scan->indexRelation, keys, nkeys, vec, remote_top_k);
-    so->remote_tids = remote_index_interface->query_with_fetch(remote_metadata.host, query, remote_top_k, true, fetch_checkpoints, n_checkpoints, &best_checkpoint);
+    best_checkpoint.is_checkpoint = false;
+    // todo: want to 
+    so->remote_tids = remote_index_interface->query_with_fetch(remote_metadata.host, remote_top_k, query, true, fetch_checkpoints, n_checkpoints, &best_checkpoint, &n_remote_tids);
 
     // set the remote_ready_page to the best checkpoint
     if (best_checkpoint.is_checkpoint) set_buffer_meta_page(scan->indexRelation, &best_checkpoint, NULL, NULL, NULL, NULL);
@@ -149,12 +120,13 @@ void remote_rescan(IndexScanDesc scan, ScanKey keys, int nkeys, ScanKey orderbys
     if (!IsMVCCSnapshot(scan->xs_snapshot))
         elog(ERROR, "non-MVCC snapshots are not supported with remote");
 
-    // get the ctids from the buffer
-    so->local_tids = buffer_get_tids(scan->indexRelation);
+
+    // get the local tids
+    so->local_tids = buffer_get_tids(scan->indexRelation, &n_local_tids);
 
     // sort the tids
-    load_tids_into_sort(index, so->remote_sortstate, so, query_datum, so->remote_tids, remote_top_k);
-    load_tids_into_sort(index, so->local_sortstate, so, query_datum, so->local_tids, remote_max_buffer_scan);
+    load_tids_into_sort(index, so->local_sortstate, so, query_datum, so->local_tids, n_local_tids);
+    load_tids_into_sort(index, so->remote_sortstate, so, query_datum, so->remote_tids, n_remote_tids);
 
     // get the first tuple
     so->more_local_tuples = tuplesort_gettupleslot(so->local_sortstate, true, false, so->local_sortslot, NULL);
@@ -185,14 +157,21 @@ void load_tids_into_sort(Relation index, Tuplesortstate *sortstate, RemoteScanOp
     // begin the index fetch (this is the preferred way for an index to request tuples from its base table)
     IndexFetchTableData *fetchData = baseTableRel->rd_tableam->index_fetch_begin(baseTableRel);
     TupleTableSlot *base_table_slot = MakeSingleTupleTableSlot(baseTableRel->rd_att, &TTSOpsBufferHeapTuple);
-    bool call_again, all_dead, found;
-
+    bool call_again = false; // N.B. call_again must be initialized to false, despite being a return flag
+    bool all_dead = false;
+    bool found;
     for (int i = 0; i < n_tids; i++) {
         // fetch the vector from the base table
-        ItemPointerData tid = tids[i];
-        found = baseTableRel->rd_tableam->index_fetch_tuple(fetchData, &tid, snapshot, base_table_slot, &call_again, &all_dead);
+        ItemPointer tid = &tids[i]; // these point to so->local_tids or so->remote_tids
+        call_again = false;
+        found = baseTableRel->rd_tableam->index_fetch_tuple(fetchData, tid, snapshot, base_table_slot, &call_again, &all_dead);
+        // all_dead tells us if the tuple is dead to all backends meanning that our index can safely drop it.
+        // TODO: we can use this to cleanup pinecone on the fly
         if (!found) {
-            elog(WARNING, "could not find tuple in base table");
+            if (!all_dead) {
+                // every tuple we request should either be found or all_dead
+                elog(WARNING, "could not find tuple in base table with tid %d:%d:%d and it is not known to be dead", tid->ip_blkid.bi_hi, tid->ip_blkid.bi_lo, tid->ip_posid);
+            }
             continue; // do not add the tuple to the sortstate
         }
 
@@ -204,7 +183,7 @@ void load_tids_into_sort(Relation index, Tuplesortstate *sortstate, RemoteScanOp
         ExecClearTuple(slot);
         slot->tts_values[0] = FunctionCall2(so->procinfo, index_values[0], query_datum); // compute distance between entry and query
         slot->tts_isnull[0] = false;
-        slot->tts_values[1] = TransactionIdGetDatum(&tid);
+        slot->tts_values[1] = ItemPointerGetDatum(tid);
         slot->tts_isnull[1] = false;
         ExecStoreVirtualTuple(slot);
 
@@ -220,7 +199,7 @@ void load_tids_into_sort(Relation index, Tuplesortstate *sortstate, RemoteScanOp
     tuplesort_performsort(sortstate);
 }
 
-ItemPointerData* buffer_get_tids(Relation index)
+ItemPointerData* buffer_get_tids(Relation index, int* return_n_tids)
 {
     RemoteBufferMetaPageData buffer_meta = RemoteSnapshotBufferMeta(index);
     BlockNumber currentblkno = buffer_meta.ready_checkpoint.blkno;
@@ -266,7 +245,7 @@ ItemPointerData* buffer_get_tids(Relation index)
             break;
         }
     }
-
+    *return_n_tids = n_tids;    
     return buffer_tids;
 }
 
@@ -281,11 +260,12 @@ bool remote_gettuple(IndexScanDesc scan, ScanDirection dir)
     double remote_best_dist, local_best_dist;
     ItemPointer local_tid, remote_tid;
     bool isnull;
+    bool use_buffer_tuple = false;
 
     // merge the results from the buffer and the remote index
     local_tid = so->more_local_tuples ? (ItemPointer) slot_getattr(so->local_sortslot, 2, &isnull) : NULL;
     remote_tid = so->more_remote_tuples ? (ItemPointer) slot_getattr(so->remote_sortslot, 2, &isnull) : NULL;
-    if (local_tid != NULL && ItemPointerEquals(local_tid, remote_tid)) {
+    if (local_tid != NULL && remote_tid != NULL && ItemPointerEquals(local_tid, remote_tid)) {
         // skip local tuple if it is the same as remote
         so->more_local_tuples = tuplesort_gettupleslot(so->local_sortstate, true, false, so->local_sortslot, NULL);
         local_tid = so->more_local_tuples ? (ItemPointer) slot_getattr(so->local_sortslot, 2, &isnull) : NULL;
@@ -293,17 +273,35 @@ bool remote_gettuple(IndexScanDesc scan, ScanDirection dir)
     local_best_dist = so->more_local_tuples ? DatumGetFloat8(slot_getattr(so->local_sortslot, 1, &isnull)) : 0;
     remote_best_dist = so->more_remote_tuples ? DatumGetFloat8(slot_getattr(so->remote_sortslot, 1, &isnull)) : 0;
     
+    // return false if there are no more tuples
     if (!so->more_local_tuples && !so->more_remote_tuples) { // no more tuples
         return false;
-    } else if (!so->more_remote_tuples || local_best_dist < remote_best_dist) { // local tuple is better
+    } 
+    
+    // choose the best tuple
+    if (!so->more_remote_tuples) { // no more remote tuples
+        use_buffer_tuple = true;
+    } else if (!so->more_local_tuples) { // no more local tuples
+        use_buffer_tuple = false;
+    } else if (local_best_dist < remote_best_dist) { // local tuple is better
+        use_buffer_tuple = true;
+    } else { // remote tuple is better
+        use_buffer_tuple = false;
+    }
+
+    // return the best tuple and set the next tuple to be fetched
+    if (use_buffer_tuple) {
+        // use the local tuple
         scan->xs_heaptid = *local_tid;
         scan->xs_recheck = true;
         so->more_local_tuples = tuplesort_gettupleslot(so->local_sortstate, true, false, so->local_sortslot, NULL);
-    } else { // remote tuple is better
+    } else {
+        // use the remote tuple
         scan->xs_heaptid = *remote_tid;
         scan->xs_recheck = false;
         so->more_remote_tuples = tuplesort_gettupleslot(so->remote_sortstate, true, false, so->remote_sortslot, NULL);
     }
+
     scan->xs_recheckorderby = false; // remote returns an approximate distance which we need to recheck.
     return true;
 }

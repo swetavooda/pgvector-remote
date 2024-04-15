@@ -98,12 +98,6 @@ IndexBuildResult *remote_build(Relation heap, Relation index, IndexInfo *indexIn
         // wait for the remote index to finish processing the vectors
         // i.e. describe stats is equal to result->index_tuples
         remote_index_interface->wait_for_index(host, result->index_tuples);
-        // cJSON* index_stats_response;
-        // index_stats_response = remote_get_index_stats(pinecone_api_key, host);
-        // while (cJSON_GetObjectItemCaseSensitive(index_stats_response, "totalVectorCount")->valueint < result->index_tuples) {
-            // sleep(1);
-            // index_stats_response = remote_get_index_stats(pinecone_api_key, host);
-        // }
     }
     return result;
 }

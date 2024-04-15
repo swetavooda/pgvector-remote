@@ -1,4 +1,4 @@
-#include "remote_api.h"
+#include "src/remote/clients/pinecone/pinecone_api.h"
 #include "src/remote/remote.h"
 #include "postgres.h"
 

@@ -5,10 +5,23 @@
 #include "postgres.h"
 
 #include "access/tupdesc.h"
-
+#include "catalog/index.h"
 
 #include <stdio.h>
 #include <stdlib.h>
+
+#include <storage/bufmgr.h>
+#include "catalog/pg_operator_d.h"
+#include "utils/rel.h"
+#include "utils/builtins.h"
+#include <time.h>
+#include "common/hashfn.h"
+
+#include <catalog/index.h>
+#include <access/heapam.h>
+#include <access/tableam.h>
+
+#include <math.h>
 
 const char* vector_metric_to_pinecone_metric[VECTOR_METRIC_COUNT] = {
     "",
@@ -40,10 +53,15 @@ char* pinecone_create_host_from_spec(int dimensions, VectorMetric metric, char* 
 
 void pinecone_wait_for_index(char* host, int n_vectors) {
     elog(NOTICE, "Waiting for Pinecone index to initialize");
+    // cJSON* index_stats_response;
+    // index_stats_response = remote_get_index_stats(pinecone_api_key, host);
+    // while (cJSON_GetObjectItemCaseSensitive(index_stats_response, "totalVectorCount")->valueint < result->index_tuples) {
+        // sleep(1);
+        // index_stats_response = remote_get_index_stats(pinecone_api_key, host);
+    // }
 }
 
 void pinecone_check_credentials(void) {
-    elog(NOTICE, "Checking Pinecone credentials");
     if (pinecone_api_key == NULL || strlen(pinecone_api_key) == 0) {
         ereport(ERROR,
                 (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
@@ -147,32 +165,71 @@ cJSON* pinecone_build_filter(Relation index, ScanKey keys, int nkeys) {
 }
 
 
-// prepare query
-
-ItemPointerData* pinecone_query_with_fetch(char* host, int top_k, PreparedQuery query, int top_k, bool include_vector_ids, RemoteCheckpoint* checkpoints, int n_checkpoints, RemoteCheckpoint* best_checkpoint_return) {
-    cJSON* request_body = (cJSON*) query;
-    cJSON** responses = remote_query_with_fetch(pinecone_api_key, host, top_k, request_body, include_vector_ids, fetch_ids);
-    ItemPointerData *results = palloc0(sizeof(ItemPointerData) * top_k); // 0 is an invalid ItemPointerData
-    // find the best checkpoint
-    cJSON* fetch_response = responses[1];
-    *best_checkpoint_return = checkpoints[0]; // TODO: get the actual best checkpoint // it might be easier to just return an arr of known visible cpoints
-    // extract the ctids from the response
-    cJSON* query_response = responses[0];
-    cJSON* matches = cJSON_GetObjectItemCaseSensitive(query_response, "matches");
-    cJSON* match = matches->child;
-    int n = 0;
-    while (match != NULL) {
-        cJSON* vector_id = cJSON_GetObjectItemCaseSensitive(match, "id");
-        char* remote_id = cJSON_GetStringValue(vector_id);
-        ItemPointerData ctid = pinecone_id_get_heap_tid(remote_id);
-        results[n++] = ctid;
-        match = match->next;
+ItemPointerData* pinecone_extract_ctids_from_fetch_response(cJSON* fetch_response, int* n_results) {
+    cJSON* vectors = cJSON_GetObjectItemCaseSensitive(fetch_response, "vectors");
+    cJSON* vector;
+    ItemPointerData *results;
+    int k = 0;
+    *n_results = cJSON_GetArraySize(vectors);
+    results = palloc0(sizeof(ItemPointerData) * *n_results); // 0 is an invalid ItemPointerData
+    cJSON_ArrayForEach(vector, vectors) {
+        char* id_str = vector->string;
+        ItemPointerData ctid = pinecone_id_get_heap_tid(id_str);
+        results[k++] = ctid;
     }
     return results;
 }
 
+cJSON* checkpoints_get_pinecone_ids(RemoteCheckpoint* checkpoints, int n_checkpoints) {
+    cJSON* ids = cJSON_CreateArray();
+    for (int i = 0; i < n_checkpoints; i++) {
+        cJSON* id = cJSON_CreateString(pinecone_id_from_heap_tid(checkpoints[i].tid));
+        cJSON_AddItemToArray(ids, id);
+    }
+    return ids;
+}
+
+
+ItemPointerData* pinecone_query_with_fetch(char* host, int top_k, PreparedQuery query, bool include_vector_ids, RemoteCheckpoint* checkpoints, int n_checkpoints, RemoteCheckpoint* best_checkpoint_return, int* n_remote_tids) {
+    cJSON* request_body = (cJSON*) query;
+    cJSON* ids = checkpoints_get_pinecone_ids(checkpoints, n_checkpoints);
+    cJSON** responses = remote_query_with_fetch(pinecone_api_key, host, request_body, include_vector_ids, ids);
+    ItemPointerData *results = palloc0(sizeof(ItemPointerData) * top_k); // 0 is an invalid ItemPointerData
+    // find the best checkpoint
+    // 1. extract the ctids from the fetch response
+    cJSON* fetch_response = responses[1];
+    int n_results;
+    ItemPointerData* fetched_ctids = pinecone_extract_ctids_from_fetch_response(fetch_response, &n_results);
+    // 2. return the best (first) checkpoint which is among the fetched
+    for (int i = 0; i < n_checkpoints; i++) {
+        RemoteCheckpoint checkpoint = checkpoints[i];
+        for (int j = 0; j < n_results; j++) {
+            if (ItemPointerEquals(&checkpoint.tid, &fetched_ctids[j])) {
+                *best_checkpoint_return = checkpoint;
+                break;
+            }
+        }
+    }
+    // extract the ctids from the response
+    {
+        cJSON* query_response = responses[0];
+        cJSON* matches = cJSON_GetObjectItemCaseSensitive(query_response, "matches");
+        cJSON* match = matches->child;
+        int n = 0;
+        while (match != NULL) {
+            cJSON* vector_id = cJSON_GetObjectItemCaseSensitive(match, "id");
+            char* remote_id = cJSON_GetStringValue(vector_id);
+            ItemPointerData ctid = pinecone_id_get_heap_tid(remote_id);
+            results[n++] = ctid;
+            match = match->next;
+        }
+        *n_remote_tids = n;
+        return results;
+    }
+}
+
 PreparedTuple pinecone_prepare_tuple_for_bulk_insert(TupleDesc tupdesc, Datum* values, bool* nulls, ItemPointer ctid) {
-    char* vector_id = remote_id_from_heap_tid(*ctid);
+    char* vector_id = pinecone_id_from_heap_tid(*ctid);
     cJSON* json_vector = tuple_get_remote_vector(tupdesc, values, nulls, vector_id);
     return (PreparedTuple) json_vector;
 }
@@ -181,7 +238,8 @@ RemoteIndexInterface pinecone_remote_index_interface = {
     .check_credentials = pinecone_check_credentials,
     .create_host_from_spec = pinecone_create_host_from_spec,
     .wait_for_index = pinecone_wait_for_index,
+    .prepare_tuple_for_bulk_insert = pinecone_prepare_tuple_for_bulk_insert,
     .bulk_upsert = pinecone_bulk_upsert,
+    .prepare_query = pinecone_prepare_query,
     .query_with_fetch = pinecone_query_with_fetch,
-    .prepare_tuple_for_bulk_insert = pinecone_prepare_tuple_for_bulk_insert
 };

@@ -6,75 +6,6 @@
 #include "utils/builtins.h"
 #include "utils/lsyscache.h"
 
-cJSON* tuple_get_remote_vector(TupleDesc tup_desc, Datum *values, bool *isnull, char *vector_id)
-{
-    cJSON *json_vector = cJSON_CreateObject();
-    cJSON *metadata = cJSON_CreateObject();
-    Vector *vector;
-    cJSON *json_values;
-    vector = DatumGetVector(values[0]);
-    validate_vector_nonzero(vector);
-    json_values = cJSON_CreateFloatArray(vector->x, vector->dim);
-    // prepare metadata
-    for (int i = 1; i < tup_desc->natts; i++) // skip the first column which is the vector
-    {
-        // todo: we should validate that all the columns have the desired types when the index is built
-        FormData_pg_attribute* td = TupleDescAttr(tup_desc, i);
-        switch (td->atttypid) {
-            case BOOLOID:
-                cJSON_AddItemToObject(metadata, NameStr(td->attname), cJSON_CreateBool(DatumGetBool(values[i])));
-                break;
-            case FLOAT8OID:
-                cJSON_AddItemToObject(metadata, NameStr(td->attname), cJSON_CreateNumber(DatumGetFloat8(values[i])));
-                break;
-            case INT4OID:
-                cJSON_AddItemToObject(metadata, NameStr(td->attname), cJSON_CreateNumber(DatumGetInt32(values[i])));
-                break;
-            case TEXTOID:
-                cJSON_AddItemToObject(metadata, NameStr(td->attname), cJSON_CreateString(text_to_cstring(DatumGetTextP(values[i]))));
-                break;
-            case TEXTARRAYOID:
-                {
-                    cJSON* json_array = text_array_get_json(values[i]);
-                    cJSON_AddItemToObject(metadata, NameStr(td->attname), json_array);
-                }
-                break;
-            default:
-                ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-                                errmsg("Invalid column type when decoding tuple."),
-                                errhint("Remote index only supports boolean, float8, text, and textarray columns")));
-        }
-    }
-    // add to vector object
-    cJSON_AddItemToObject(json_vector, "id", cJSON_CreateString(vector_id));
-    cJSON_AddItemToObject(json_vector, "values", json_values);
-    cJSON_AddItemToObject(json_vector, "metadata", metadata);
-    return json_vector;
-}
-
-cJSON* index_tuple_get_remote_vector(Relation index, IndexTuple itup) {
-    int natts = index->rd_att->natts;
-    Datum *itup_values = (Datum *) palloc(sizeof(Datum) * natts);
-    bool *itup_isnull = (bool *) palloc(sizeof(bool) * natts);
-    TupleDesc itup_desc = index->rd_att;
-    char* vector_id;
-    index_deform_tuple(itup, itup_desc, itup_values, itup_isnull);
-    vector_id = remote_id_from_heap_tid(itup->t_tid);
-    return tuple_get_remote_vector(itup_desc, itup_values, itup_isnull, vector_id);
-}
-
-cJSON* heap_tuple_get_remote_vector(Relation heap, HeapTuple htup) {
-    int natts = heap->rd_att->natts;
-    Datum *htup_values = (Datum *) palloc(sizeof(Datum) * natts);
-    bool *htup_isnull = (bool *) palloc(sizeof(bool) * natts);
-    TupleDesc htup_desc = heap->rd_att;
-    char* vector_id;
-    heap_deform_tuple(htup, htup_desc, htup_values, htup_isnull);
-    vector_id = remote_id_from_heap_tid(htup->t_self);
-    return tuple_get_remote_vector(htup_desc, htup_values, htup_isnull, vector_id);
-}
-
-
 RemoteStaticMetaPageData RemoteSnapshotStaticMeta(Relation index)
 {
     Buffer buf;
@@ -160,7 +91,7 @@ void set_buffer_meta_page(Relation index, RemoteCheckpoint* ready_checkpoint, Re
 char* checkpoint_to_string(RemoteCheckpoint checkpoint) {
     char* str = palloc(200);
     if (checkpoint.is_checkpoint) {
-        snprintf(str, 200, "#%d, blk %d, tid %s, n_prec %d", checkpoint.checkpoint_no, checkpoint.blkno, remote_id_from_heap_tid(checkpoint.tid), checkpoint.n_preceding_tuples);
+        snprintf(str, 200, "#%d, blk %d, tid %d:%d, n_prec %d", checkpoint.checkpoint_no, checkpoint.blkno, ItemPointerGetBlockNumber(&checkpoint.tid), ItemPointerGetOffsetNumber(&checkpoint.tid), checkpoint.n_preceding_tuples);
     } else {
         snprintf(str, 200, "invalid");
     }
@@ -198,6 +129,7 @@ void remote_print_relation(Relation index) {
         elog(INFO, "\nBuffer Opaque Page %d: %s", blkno, buffer_opaque_to_string(buffer_opaque));
     }
 }
+
 
 /* text_array_get_json */
 cJSON* text_array_get_json(Datum value) {

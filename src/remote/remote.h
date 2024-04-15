@@ -140,9 +140,9 @@ typedef void (*ri_delete_all_function)(char* host);
 typedef bool (*ri_host_is_empty_function)(char* host);
 typedef bool (*ri_bulk_upsert_function)(char* host, PreparedTuple* prepared_vectors, int remote_vectors_per_request, int n_prepared_tuples);
 
-typedef PreparedQuery (*ri_prepare_query_function)(Relation index, ScanKey keys, int nkeys, Vector* vector);
+typedef PreparedQuery (*ri_prepare_query_function)(Relation index, ScanKey keys, int nkeys, Vector* vector, int top_k);
 
-typedef ItemPointerData* (*ri_query_with_fetch_function)(char* host, int top_k, PreparedQuery query, bool include_vector_ids, RemoteCheckpoint* checkpoints, int n_checkpoints, RemoteCheckpoint* best_checkpoint_return);
+typedef ItemPointerData* (*ri_query_with_fetch_function)(char* host, int top_k, PreparedQuery query, bool include_vector_ids, RemoteCheckpoint* checkpoints, int n_checkpoints, RemoteCheckpoint* best_checkpoint_return, int* n_remote_tids);
 
 typedef PreparedTuple (*ri_prepare_tuple_for_bulk_insert_function)(TupleDesc tupdesc, Datum* values, bool* nulls, ItemPointer ctid);
 
@@ -227,12 +227,11 @@ void FlushToRemote(Relation index);
 IndexScanDesc remote_beginscan(Relation index, int nkeys, int norderbys);
 cJSON* remote_build_filter(Relation index, ScanKey keys, int nkeys);
 void remote_rescan(IndexScanDesc scan, ScanKey keys, int nkeys, ScanKey orderbys, int norderbys);
-ItemPointerData* buffer_get_tids(Relation index);
+ItemPointerData* buffer_get_tids(Relation index, int* n_local_tids);
 void load_tids_into_sort(Relation index, Tuplesortstate *sortstate, RemoteScanOpaque so, Datum query_datum, ItemPointerData* tids, int n_tids);
 bool remote_gettuple(IndexScanDesc scan, ScanDirection dir);
 void no_endscan(IndexScanDesc scan);
 RemoteCheckpoint* get_checkpoints_to_fetch(Relation index, int* n_checkpoints);
-RemoteCheckpoint get_best_fetched_checkpoint(Relation index, RemoteCheckpoint* checkpoints, cJSON* fetch_results);
 cJSON *fetch_ids_from_checkpoints(RemoteCheckpoint *checkpoints);
 
 
@@ -251,12 +250,6 @@ bool no_validate(Oid opclassoid);
 
 // utils
 // converting between postgres tuples and json vectors
-cJSON* tuple_get_remote_vector(TupleDesc tup_desc, Datum *values, bool *isnull, char *vector_id);
-cJSON* index_tuple_get_remote_vector(Relation index, IndexTuple itup);
-cJSON* heap_tuple_get_remote_vector(Relation heap, HeapTuple htup);
-char* remote_id_from_heap_tid(ItemPointerData heap_tid);
-ItemPointerData remote_id_get_heap_tid(char *id);
-cJSON* text_array_get_json(Datum value);
 // read and write meta pages
 RemoteStaticMetaPageData RemoteSnapshotStaticMeta(Relation index);
 RemoteBufferMetaPageData RemoteSnapshotBufferMeta(Relation index);
@@ -266,6 +259,7 @@ char* checkpoint_to_string(RemoteCheckpoint checkpoint);
 char* buffer_meta_to_string(RemoteBufferMetaPageData buffer_meta);
 char* buffer_opaque_to_string(RemoteBufferOpaqueData buffer_opaque);
 void remote_print_relation(Relation index);
+cJSON* text_array_get_json(Datum value);
 
 // helpers
 Oid get_index_oid_from_name(char* index_name);

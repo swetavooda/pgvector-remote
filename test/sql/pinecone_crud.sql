@@ -2,7 +2,7 @@
 -- suppress output
 \o /dev/null
 -- logging level
-SET client_min_messages = 'debug1';
+SET client_min_messages = 'notice';
 -- flush each vector individually
 SET remote.vectors_per_request = 1;
 SET remote.requests_per_batch = 1;
@@ -16,7 +16,6 @@ CREATE TABLE t (id int, val vector(3));
 \o
 
 -- CREATE INDEX
--- mock create index
 INSERT INTO remote_mock (url_prefix, method, response)
 VALUES ('https://api.pinecone.io/indexes', 'POST', $${
         "name": "invalid",
@@ -49,8 +48,11 @@ INSERT INTO remote_mock (url_prefix, method, response)
 VALUES ('https://fakehost/vectors/upsert', 'POST', '{"upsertedCount":1}');
 -- insert into table
 INSERT INTO t (id, val) VALUES (1, '[1,0,0]');
-INSERT INTO t (id, val) VALUES (2, '[1,0,1]');
+INSERT INTO t (id, val) VALUES (2, '[2,0,0]');
+INSERT INTO t (id, val) VALUES (3, '[3,0,0]');
+INSERT INTO t (id, val) VALUES (4, '[4,0,0]');
 
+SELECT *, ctid FROM t;
 -- SELECT FROM TABLE
 -- mock query
 INSERT INTO remote_mock (url_prefix, method, response)
@@ -81,6 +83,8 @@ SELECT id,val,val<->'[1,1,1]' as dist FROM t ORDER BY val <-> '[1, 1, 1]';
 UPDATE t SET val = '[1, 1, 1]' WHERE id = 1;
 -- this will trigger a query and a fetch request, we'll reuse the mock responses
 SELECT id,val,val<->'[1,1,1]' as dist FROM t ORDER BY val <-> '[1,1,1]'; 
+\q
+
 
 -- DELETE AND QUERY FROM TABLE
 DELETE FROM t WHERE id = 1;
