@@ -1,5 +1,7 @@
 # pgvector-remote
 
+[introduction](https://medium.com/@sweta.vooda/pgvector-remote-a-pgvector-fork-with-the-performance-of-pinecone-5d8a7f6a50bd)
+
 pgvector-remote is a fork of pgvector which combines the simplicity of [pgvector](https://github.com/pgvector/pgvector)
 with the power of remote vector databases, by introducing a new remote vector index type. Currently, pgvector-remote only supports [pinecone]("https://www.pinecone.io/")
 , but we plan to support other vendors in the future.
