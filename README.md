@@ -14,6 +14,10 @@ with the power of remote vector databases, by introducing a new remote vector in
 - [Docker](#docker)
 - [Credits](#credits)
 
+
+![image](https://github.com/georgia-tech-db/pgvector-remote/assets/66109536/707eb52e-50f5-4675-8e66-d0a97066afd0)
+*Benchmarks for a 10M filtered search workload. https://big-ann-benchmarks.com/neurips23.html#tracks. Results for pgvector are shown for a tuned hnsw index on a t2.2xlarge (32GB RAM). Results for pinecone are for a p2.x8 pod.*
+
 ## Short Version
 
 ```sql
