@@ -77,9 +77,9 @@ IndexBuildResult *remote_build(Relation heap, Relation index, IndexInfo *indexIn
         }
         // verify that the host is empty (unless we are skipping the build)
         if (!opts->skip_build) {
-            bool empty = remote_index_interface->host_is_empty(host);
-            if (!empty) {
-                ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE), errmsg("Host is not empty"), errhint("You must provide an empty host if you are not skipping the build.")));
+            bool n_live = remote_index_interface->count_live(host);
+            if (n_live != 0) {
+                ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE), errmsg("Host is not empty"), errhint("You must provide an empty host if you are not skipping the build. But the host %s contains %d vectors.", host, n_live)));
             }
         }
     } else {
@@ -94,10 +94,16 @@ IndexBuildResult *remote_build(Relation heap, Relation index, IndexInfo *indexIn
     result->heap_tuples = 0;
     result->index_tuples = 0;
     if (!opts->skip_build) {
+        int n_live;
         InsertBaseTable(heap, index, indexInfo, host, result, remote_index_interface);
         // wait for the remote index to finish processing the vectors
         // i.e. describe stats is equal to result->index_tuples
-        remote_index_interface->wait_for_index(host, result->index_tuples);
+        n_live = remote_index_interface->count_live(host);
+        while (n_live < (int) result->index_tuples) {
+            elog(DEBUG1, "Waiting for remote index to finish processing vectors. %d/%d", n_live, (int) result->index_tuples);
+            pg_usleep(1000000); // 1 second
+            n_live = remote_index_interface->count_live(host);
+        }
     }
     return result;
 }

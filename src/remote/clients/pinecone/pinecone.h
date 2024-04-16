@@ -2,7 +2,13 @@
 #ifndef PINECONE_CLIENT_H
 #define PINECONE_CLIENT_H
 
-#include "src/remote/rremote.h"
+#include "src/remote/cJSON.h"
+#include "src/remote/remote.h"  
+#include "src/vector.h"
+#include "postgres.h" // bool
+
+// GUC
+extern char* pinecone_api_key;
 
 extern RemoteIndexInterface pinecone_remote_index_interface;
 
@@ -13,7 +19,7 @@ ItemPointerData* pinecone_extract_ctids_from_fetch_response(cJSON* fetch_respons
 // interface
 // create
 char* pinecone_create_host_from_spec(int dimensions, VectorMetric metric, char* remote_index_name, char* spec);
-void pinecone_wait_for_index(char* host, int n_vectors);
+int pinecone_count_live(char* host);
 void pinecone_check_credentials(void);
 // bulk insert
 PreparedBulkInsert pinecone_begin_prepare_bulk_insert(TupleDesc tupdesc);

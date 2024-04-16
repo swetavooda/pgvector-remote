@@ -1,5 +1,4 @@
 #include "remote/remote.h"
-#include "remote/rremote.h"
 #include "remote/clients/pinecone/pinecone.h"
 #include "remote/clients/pinecone/pinecone_api.h"
 #include "postgres.h"
@@ -22,6 +21,11 @@
 #include <access/tableam.h>
 
 #include <math.h>
+
+#include "src/remote/cJSON.h"
+#include "src/remote/remote.h"  
+#include "src/vector.h"
+#include "postgres.h" // bool
 
 const char* vector_metric_to_pinecone_metric[VECTOR_METRIC_COUNT] = {
     "",
@@ -51,14 +55,10 @@ char* pinecone_create_host_from_spec(int dimensions, VectorMetric metric, char* 
     // return host;
 }
 
-void pinecone_wait_for_index(char* host, int n_vectors) {
-    elog(NOTICE, "Waiting for Pinecone index to initialize");
-    // cJSON* index_stats_response;
-    // index_stats_response = remote_get_index_stats(pinecone_api_key, host);
-    // while (cJSON_GetObjectItemCaseSensitive(index_stats_response, "totalVectorCount")->valueint < result->index_tuples) {
-        // sleep(1);
-        // index_stats_response = remote_get_index_stats(pinecone_api_key, host);
-    // }
+int pinecone_count_live(char* host) {
+    cJSON* index_stats_response;
+    index_stats_response = remote_get_index_stats(pinecone_api_key, host);
+    return cJSON_GetObjectItemCaseSensitive(index_stats_response, "totalVectorCount")->valueint;
 }
 
 void pinecone_check_credentials(void) {
@@ -245,7 +245,7 @@ RemoteIndexInterface pinecone_remote_index_interface = {
     // create index
     .check_credentials = pinecone_check_credentials,
     .create_host_from_spec = pinecone_create_host_from_spec,
-    .wait_for_index = pinecone_wait_for_index,
+    .count_live = pinecone_count_live,
     // upsert
     .begin_prepare_bulk_insert = pinecone_begin_prepare_bulk_insert,
     .append_prepare_bulk_insert = pinecone_append_prepare_bulk_insert,

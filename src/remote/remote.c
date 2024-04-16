@@ -11,8 +11,6 @@
 #define MarkGUCPrefixReserved(x) EmitWarningsOnPlaceholders(x)
 #endif
 
-char* pinecone_api_key = NULL;
-char* milvus_api_key = NULL;
 int remote_top_k = 1000; // todo: dynamic meta w/ helper fn
 int remote_vectors_per_request = 100;  // todo: static meta
 int remote_requests_per_batch = 10;  // todo: static meta
@@ -63,14 +61,6 @@ void RemoteInit(void)
                             false, AccessExclusiveLock);
     // todo: allow for specifying a hostname instead of asking to create it
     // todo: you can have a relopts_validator which validates the whole relopt set. This could be used to check that exactly one of spec or host is set
-    DefineCustomStringVariable("remote.pinecone_api_key", "Pinecone API key", "Pinecone API key",
-                              &pinecone_api_key, "", 
-                              PGC_USERSET, // restrict to superusers, takes immediate effect and is not saved in the configuration file 
-                              0, NULL, NULL, NULL); // todo: you can have a check_hook that checks that the api key is valid.
-    DefineCustomStringVariable("remote.milvus_api_key", "milvus API key", "milvus API key",
-                              &milvus_api_key, "", 
-                              PGC_USERSET, // restrict to superusers, takes immediate effect and is not saved in the configuration file 
-                              0, NULL, NULL, NULL); // todo: you can have a check_hook that checks that the api key is valid.
     DefineCustomIntVariable("remote.top_k", "Remote top k", "Remote top k",
                             &remote_top_k,
                             500, 1, 10000,

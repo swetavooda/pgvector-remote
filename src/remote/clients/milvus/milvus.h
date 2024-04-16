@@ -2,17 +2,18 @@
 #ifndef MILVUS_CLIENT_H
 #define MILVUS_CLIENT_H
 
-#include "src/remote/clients/milvus/milvus.h"  
+#include "src/remote/remote.h"  
 #include "src/vector.h"
-#include "src/remote/rremote.h"
+#include "postgres.h" // bool
 
+// GUC
+extern char* milvus_api_key;
 
 // interface
 // create
 char* milvus_create_host_from_spec(int dimensions, VectorMetric metric, char* remote_index_name, char* spec);
-void milvus_wait_for_index(char* host, int n_vectors);
 void milvus_check_credentials(void);
-bool milvus_host_is_empty(char* host);
+int milvus_count_live(char* host);
 // bulk insert
 PreparedBulkInsert milvus_begin_prepare_bulk_insert(TupleDesc tupdesc);
 void milvus_append_prepare_bulk_insert(PreparedBulkInsert prepared_vectors, TupleDesc tupdesc, Datum* values, bool* nulls, ItemPointer ctid);

@@ -135,9 +135,8 @@ typedef struct RemoteBufferTuple
 
 typedef void (*ri_check_credentials_function)(void);
 typedef char* (*ri_create_host_from_spec_function)(int dimensions, VectorMetric metric, char* remote_index_name, char* spec);
-typedef void (*ri_wait_for_index_function)(char* host, int n_vectors);
 typedef void (*ri_delete_all_function)(char* host);
-typedef bool (*ri_host_is_empty_function)(char* host);
+typedef int (*ri_count_live_function)(char* host);
 
 typedef PreparedQuery (*ri_prepare_query_function)(Relation index, ScanKey keys, int nkeys, Vector* vector, int top_k);
 
@@ -155,9 +154,8 @@ typedef struct
     // create index
     ri_check_credentials_function check_credentials;
     ri_create_host_from_spec_function create_host_from_spec;
-    ri_wait_for_index_function wait_for_index;
     ri_delete_all_function delete_all;
-    ri_host_is_empty_function host_is_empty;
+    ri_count_live_function count_live;
     // insert
     ri_begin_prepare_bulk_insert_function begin_prepare_bulk_insert;
     ri_append_prepare_bulk_insert_function append_prepare_bulk_insert;
@@ -182,8 +180,6 @@ typedef struct RemoteBuildState
 
 
 // GUC variables
-extern char* pinecone_api_key;
-extern char* milvus_api_key;
 extern int remote_top_k;
 extern int remote_vectors_per_request;
 extern int remote_requests_per_batch;
@@ -210,7 +206,6 @@ void no_costestimate(PlannerInfo *root, IndexPath *path, double loop_count,
 void generateRandomAlphanumeric(char *s, const int length);
 char* get_remote_index_name(Relation index);
 IndexBuildResult *remote_build(Relation heap, Relation index, IndexInfo *indexInfo);
-char* CreateRemoteIndexAndWait(Relation index, cJSON* spec_json, VectorMetric metric, char* remote_index_name, int dimensions);
 void InsertBaseTable(Relation heap, Relation index, IndexInfo *indexInfo, char* host, IndexBuildResult *result, RemoteIndexInterface* remote_index_interface);
 void remote_build_callback(Relation index, ItemPointer tid, Datum *values, bool *isnull, bool tupleIsAlive, void *state);
 void InitIndexPages(Relation index, VectorMetric metric, int dimensions, char *remote_index_name, char *host);
@@ -232,15 +227,12 @@ void FlushToRemote(Relation index);
 
 // scan
 IndexScanDesc remote_beginscan(Relation index, int nkeys, int norderbys);
-cJSON* remote_build_filter(Relation index, ScanKey keys, int nkeys);
 void remote_rescan(IndexScanDesc scan, ScanKey keys, int nkeys, ScanKey orderbys, int norderbys);
 ItemPointerData* buffer_get_tids(Relation index, int* n_local_tids);
 void load_tids_into_sort(Relation index, Tuplesortstate *sortstate, RemoteScanOpaque so, Datum query_datum, ItemPointerData* tids, int n_tids);
 bool remote_gettuple(IndexScanDesc scan, ScanDirection dir);
 void no_endscan(IndexScanDesc scan);
 RemoteCheckpoint* get_checkpoints_to_fetch(Relation index, int* n_checkpoints);
-cJSON *fetch_ids_from_checkpoints(RemoteCheckpoint *checkpoints);
-
 
 
 // vacuum
@@ -251,7 +243,6 @@ IndexBulkDeleteResult *no_vacuumcleanup(IndexVacuumInfo *info, IndexBulkDeleteRe
 // validate
 void remote_spec_validator(const char *spec);
 void remote_host_validator(const char *spec);
-void validate_api_key(void);
 void validate_vector_nonzero(Vector* vector);
 bool no_validate(Oid opclassoid);
 

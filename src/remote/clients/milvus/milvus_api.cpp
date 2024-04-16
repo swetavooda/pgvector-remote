@@ -70,6 +70,29 @@ std::shared_ptr<milvus::MilvusClient> get_client(const char* cluster_host) {
 }
 
 // CREATE
+extern "C" int milvus_count_live(char* host) {
+    auto client = get_client(host);
+    std::string collection_name = "c0";
+    bool has_collection = false;
+    auto status = client->HasCollection(collection_name, has_collection);
+    CheckStatus("Failed to check collection:", status);
+    if (!has_collection) {
+        elog(ERROR, "Collection %s does not exist", collection_name.c_str());
+    }
+    status = client->LoadCollection(collection_name);
+    CheckStatus("Failed to load collection:", status);
+    // count vecs in partition
+    milvus::PartitionStat part_stat;
+    std::string partition_name = "_default";
+    status = client->GetPartitionStatistics(collection_name, partition_name, part_stat);
+    CheckStatus("Failed to get partition statistics:", status);
+    bool empty = part_stat.RowCount() == 0;
+    if (!empty) {
+        elog(WARNING, "Collection %s is not empty. It contains %ld vectors.", collection_name.c_str(), part_stat.RowCount());
+    }
+    return empty;
+}
+
 extern "C" char* milvus_create_host_from_spec(int dimensions, VectorMetric metric, char* remote_index_name, char* spec) {
     // elog(NOTICE, "milvus_create_host_from_spec(%d, %d, %s, %s)", dimensions, metric, remote_index_name, spec);
     // auto client = milvus::MilvusClient::Create();
