@@ -43,7 +43,7 @@
 #define REMOTE_STRATEGY_ARRAY_OVERLAP 7
 #define REMOTE_STRATEGY_ARRAY_CONTAINS 2
 
-typedef char* PreparedTuple;
+typedef char* PreparedBulkInsert;
 typedef char* PreparedQuery;
 
 // structs
@@ -138,13 +138,17 @@ typedef char* (*ri_create_host_from_spec_function)(int dimensions, VectorMetric 
 typedef void (*ri_wait_for_index_function)(char* host, int n_vectors);
 typedef void (*ri_delete_all_function)(char* host);
 typedef bool (*ri_host_is_empty_function)(char* host);
-typedef bool (*ri_bulk_upsert_function)(char* host, PreparedTuple* prepared_vectors, int remote_vectors_per_request, int n_prepared_tuples);
 
 typedef PreparedQuery (*ri_prepare_query_function)(Relation index, ScanKey keys, int nkeys, Vector* vector, int top_k);
 
 typedef ItemPointerData* (*ri_query_with_fetch_function)(char* host, int top_k, PreparedQuery query, bool include_vector_ids, RemoteCheckpoint* checkpoints, int n_checkpoints, RemoteCheckpoint* best_checkpoint_return, int* n_remote_tids);
 
-typedef PreparedTuple (*ri_prepare_tuple_for_bulk_insert_function)(TupleDesc tupdesc, Datum* values, bool* nulls, ItemPointer ctid);
+// insert
+typedef PreparedBulkInsert (*ri_begin_prepare_bulk_insert_function)(TupleDesc tupdesc);
+typedef void (*ri_append_prepare_bulk_insert_function)(PreparedBulkInsert prepared_vectors, TupleDesc tupdesc, Datum* values, bool* nulls, ItemPointer ctid);
+typedef void (*ri_end_prepare_bulk_insert_function)(PreparedBulkInsert prepared_vectors);
+typedef void (*ri_delete_prepared_bulk_insert_function)(PreparedBulkInsert prepared_vectors);
+typedef bool (*ri_bulk_upsert_function)(char* host, PreparedBulkInsert prepared_vectors, int remote_vectors_per_request, int n_prepared_tuples);
 
 typedef struct
 {
@@ -155,8 +159,11 @@ typedef struct
     ri_delete_all_function delete_all;
     ri_host_is_empty_function host_is_empty;
     // insert
-    ri_prepare_tuple_for_bulk_insert_function prepare_tuple_for_bulk_insert;
-    ri_bulk_upsert_function bulk_upsert; /* bulk_upsert is responsible for freeing each PreparedTuple */
+    ri_begin_prepare_bulk_insert_function begin_prepare_bulk_insert;
+    ri_append_prepare_bulk_insert_function append_prepare_bulk_insert;
+    ri_end_prepare_bulk_insert_function end_prepare_bulk_insert;
+    ri_delete_prepared_bulk_insert_function delete_prepared_bulk_insert;
+    ri_bulk_upsert_function bulk_upsert; /* bulk_upsert is responsible for freeing each PreparedBulkInsert */
     // query
     ri_prepare_query_function prepare_query;
     ri_query_with_fetch_function query_with_fetch;
@@ -167,7 +174,7 @@ extern RemoteIndexInterface* remote_index_interfaces[NUM_PROVIDERS];
 typedef struct RemoteBuildState
 {
     int64 indtuples; // total number of tuples indexed
-    PreparedTuple *prepared_tuples; // array of prepared tuples
+    PreparedBulkInsert prepared_tuples; // array of prepared tuples
     int n_prepared_tuples; // number of prepared tuples
     char host[100];
     RemoteIndexInterface* remote_index_interface;

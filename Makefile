@@ -1,13 +1,19 @@
 EXTENSION = vector
 EXTVERSION = remote0.1.0
 
-SHLIB_LINK += -lcurl
+SHLIB_LINK += -lcurl 
+# TODO: conditionally build clients
+SHLIB_LINK += -lgrpc++ -lgrpc -lgrpc++_reflection -lprotobuf -ldl -lmilvus
 
 MODULE_big = vector
 DATA = $(wildcard sql/*--*.sql)
 
-SOURCES = $(wildcard src/*.c) $(wildcard src/remote/*.c) $(wildcard src/remote/clients/pinecone/*.c) $(wildcard src/remote/clients/milvus/*.c)
-OBJS = $(SOURCES:.c=.o)
+C_SOURCES = $(wildcard src/*.c) $(wildcard src/remote/*.c) $(wildcard src/remote/clients/pinecone/*.c) $(wildcard src/remote/clients/milvus/*.c)
+C_OBJS = $(C_SOURCES:.c=.o)
+CPP_SOURCES = $(wildcard src/remote/clients/milvus/*.cpp)
+CPP_OBJS = $(CPP_SOURCES:.cpp=.o)
+SOURCES = $(C_SOURCES) $(CPP_SOURCES)
+OBJS = $(C_OBJS) $(CPP_OBJS)
 
 HEADERS = src/vector.h 
 
@@ -17,6 +23,9 @@ REGRESS_OPTS = --inputdir=test --load-extension=$(EXTENSION)
 
 OPTFLAGS = -march=native -O0 -fno-strict-aliasing -DREMOTE_MOCK -g
 PG_CFLAGS += -I$(srcdir)/src
+
+PG_CPPFLAGS = $(shell $(PG_CONFIG) --cppflags)
+PG_CPPFLAGS += -fno-exceptions
 
 # Mac ARM doesn't support -march=native
 ifeq ($(shell uname -s), Darwin)

@@ -231,7 +231,7 @@ void FlushToRemote(Relation index)
     bool found = false;
 
     // hold
-    PreparedTuple* prepared_tuples = (PreparedTuple*) palloc(sizeof(PreparedTuple) * REMOTE_BATCH_SIZE);
+    PreparedBulkInsert prepared_tuples = interface->begin_prepare_bulk_insert(index->rd_att);
     int n_prepared_tuples = 0;
 
     // acquire the remote insertion lock
@@ -285,7 +285,8 @@ void FlushToRemote(Relation index)
                 // we know in advance how many vectors we want to send, correct?
                 // each vector is individually prepared and we pass an array
 
-                prepared_tuples[n_prepared_tuples++] = interface->prepare_tuple_for_bulk_insert(index->rd_att, index_values, index_isnull, &buffer_tup.tid);
+                interface->append_prepare_bulk_insert(prepared_tuples, index->rd_att, index_values, index_isnull, &buffer_tup.tid);
+                n_prepared_tuples++;
             }
         }
 
@@ -304,7 +305,10 @@ void FlushToRemote(Relation index)
         if (RemotePageGetOpaque(page)->checkpoint.is_checkpoint) {
             GenericXLogState *state = GenericXLogStart(index); // start a new WAL record
  
+            interface->end_prepare_bulk_insert(prepared_tuples);
             interface->bulk_upsert(static_meta.host, prepared_tuples, remote_vectors_per_request, n_prepared_tuples);
+            interface->delete_prepared_bulk_insert(prepared_tuples);
+            prepared_tuples = interface->begin_prepare_bulk_insert(index->rd_att);
             n_prepared_tuples = 0;
 
             // lock the buffer meta page
@@ -323,6 +327,9 @@ void FlushToRemote(Relation index)
             if (buffer_meta.latest_checkpoint.blkno == currentblkno) break;
         }
     }
+    // free the prepared tuples
+    interface->end_prepare_bulk_insert(prepared_tuples);
+    interface->delete_prepared_bulk_insert(prepared_tuples);
     UnlockReleaseBuffer(buf); // release the last buffer
 
     // end the index fetch

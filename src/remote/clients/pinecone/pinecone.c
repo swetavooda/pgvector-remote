@@ -70,23 +70,6 @@ void pinecone_check_credentials(void) {
     }
 }
 
-bool pinecone_bulk_upsert(char* host, PreparedTuple* prepared_vectors, int remote_vectors_per_request, int n_prepared_tuples) {
-    cJSON *json_vectors, *response;
-    json_vectors = cJSON_CreateArray();
-    for (int i = 0; i < n_prepared_tuples; i++) {
-        cJSON* json_vector = (cJSON*) prepared_vectors[i];
-        cJSON_AddItemToArray(json_vectors, json_vector);
-    }
-    response = remote_bulk_upsert(pinecone_api_key, host, json_vectors, remote_vectors_per_request);
-    cJSON_Delete(json_vectors);
-    elog(DEBUG1, "Pinecone bulk upsert response: %s", cJSON_Print(response));
-    if (response != NULL && cJSON_GetObjectItemCaseSensitive(response, "upsertedCount") != NULL) {
-        return true;
-    }
-    return false;
-}
-
-
 PreparedQuery pinecone_prepare_query(Relation index, ScanKey keys, int nkeys, Vector* vec, int top_k) {
     cJSON* filter = pinecone_build_filter(index, keys, nkeys);
     cJSON* query_vector_values = cJSON_CreateFloatArray(vec->x, vec->dim);
@@ -228,18 +211,48 @@ ItemPointerData* pinecone_query_with_fetch(char* host, int top_k, PreparedQuery 
     }
 }
 
-PreparedTuple pinecone_prepare_tuple_for_bulk_insert(TupleDesc tupdesc, Datum* values, bool* nulls, ItemPointer ctid) {
+// prepare_bulk_insert
+PreparedBulkInsert pinecone_begin_prepare_bulk_insert(TupleDesc tupdesc) {
+    cJSON* json_vectors = cJSON_CreateArray();
+    return (PreparedBulkInsert) json_vectors;
+}
+void pinecone_append_prepare_bulk_insert(PreparedBulkInsert prepared_vectors, TupleDesc tupdesc, Datum* values, bool* nulls, ItemPointer ctid) {
+    cJSON* json_vectors = (cJSON*) prepared_vectors;
     char* vector_id = pinecone_id_from_heap_tid(*ctid);
     cJSON* json_vector = tuple_get_remote_vector(tupdesc, values, nulls, vector_id);
-    return (PreparedTuple) json_vector;
+    cJSON_AddItemToArray(json_vectors, json_vector);
+}
+void pinecone_end_prepare_bulk_insert(PreparedBulkInsert prepared_vectors) {
+    return;
+}
+void pinecone_delete_prepared_bulk_insert(PreparedBulkInsert prepared_vectors) {
+    cJSON_Delete((cJSON*) prepared_vectors);
 }
 
+bool pinecone_bulk_upsert(char* host, PreparedBulkInsert prepared_vectors, int remote_vectors_per_request, int n_prepared_tuples) {
+    cJSON *json_vectors = (cJSON*) prepared_vectors;
+    cJSON *response;
+    response = remote_bulk_upsert(pinecone_api_key, host, json_vectors, remote_vectors_per_request);
+    elog(DEBUG1, "Pinecone bulk upsert response: %s", cJSON_Print(response));
+    if (response != NULL && cJSON_GetObjectItemCaseSensitive(response, "upsertedCount") != NULL) {
+        return true;
+    }
+    return false;
+}
+
+
 RemoteIndexInterface pinecone_remote_index_interface = {
+    // create index
     .check_credentials = pinecone_check_credentials,
     .create_host_from_spec = pinecone_create_host_from_spec,
     .wait_for_index = pinecone_wait_for_index,
-    .prepare_tuple_for_bulk_insert = pinecone_prepare_tuple_for_bulk_insert,
+    // upsert
+    .begin_prepare_bulk_insert = pinecone_begin_prepare_bulk_insert,
+    .append_prepare_bulk_insert = pinecone_append_prepare_bulk_insert,
+    .end_prepare_bulk_insert = pinecone_end_prepare_bulk_insert,
+    .delete_prepared_bulk_insert = pinecone_delete_prepared_bulk_insert,
     .bulk_upsert = pinecone_bulk_upsert,
+    // query
     .prepare_query = pinecone_prepare_query,
     .query_with_fetch = pinecone_query_with_fetch,
 };

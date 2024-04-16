@@ -11,13 +11,19 @@ cJSON* checkpoints_get_pinecone_ids(RemoteCheckpoint* checkpoints, int n_checkpo
 ItemPointerData* pinecone_extract_ctids_from_fetch_response(cJSON* fetch_response, int* n_results);
 
 // interface
+// create
 char* pinecone_create_host_from_spec(int dimensions, VectorMetric metric, char* remote_index_name, char* spec);
 void pinecone_wait_for_index(char* host, int n_vectors);
 void pinecone_check_credentials(void);
-bool pinecone_bulk_upsert(char* host, PreparedTuple* prepared_vectors, int remote_vectors_per_request, int n_prepared_tuples);
-ItemPointerData* pinecone_query_with_fetch(char* host, int top_k, PreparedQuery query, bool include_vector_ids, RemoteCheckpoint* checkpoints, int n_checkpoints, RemoteCheckpoint* best_checkpoint_return, int* n_remote_tids);
-PreparedTuple pinecone_prepare_tuple_for_bulk_insert(TupleDesc tupdesc, Datum* values, bool* nulls, ItemPointer ctid);
+// bulk insert
+PreparedBulkInsert pinecone_begin_prepare_bulk_insert(TupleDesc tupdesc);
+void pinecone_append_prepare_bulk_insert(PreparedBulkInsert prepared_vectors, TupleDesc tupdesc, Datum* values, bool* nulls, ItemPointer ctid);
+void pinecone_end_prepare_bulk_insert(PreparedBulkInsert prepared_vectors);
+void pinecone_delete_prepared_bulk_insert(PreparedBulkInsert prepared_vectors);
+bool pinecone_bulk_upsert(char* host, PreparedBulkInsert prepared_vectors, int remote_vectors_per_request, int n_prepared_tuples);
+// query
 PreparedQuery pinecone_prepare_query(Relation index, ScanKey keys, int nkeys, Vector* vec, int top_k);
+ItemPointerData* pinecone_query_with_fetch(char* host, int top_k, PreparedQuery query, bool include_vector_ids, RemoteCheckpoint* checkpoints, int n_checkpoints, RemoteCheckpoint* best_checkpoint_return, int* n_remote_tids);
 
 // utils
 cJSON* text_array_get_json(Datum value);
