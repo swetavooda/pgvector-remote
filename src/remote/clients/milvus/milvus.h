@@ -8,11 +8,12 @@
 
 // GUC
 extern char* milvus_api_key;
+extern char* milvus_cluster_host;
 
 // interface
 // create
-char* milvus_create_host_from_spec(int dimensions, VectorMetric metric, char* remote_index_name, char* spec);
-void milvus_check_credentials(void);
+char* milvus_create_host_from_spec(int dimensions, VectorMetric metric, char* spec, Relation index);
+void milvus_validate_host_schema(char* host, int dimensions, VectorMetric metric, Relation index);
 int milvus_count_live(char* host);
 // bulk insert
 PreparedBulkInsert milvus_begin_prepare_bulk_insert(TupleDesc tupdesc);

@@ -36,11 +36,12 @@ const char* vector_metric_to_pinecone_metric[VECTOR_METRIC_COUNT] = {
 
 // char* CreateRemoteIndexAndWait(Relation index, cJSON* spec_json, VectorMetric metric, char* remote_index_name, int dimensions) {
         // host = remote_index_interface->create_host_from_spec(dimensions, metric, remote_index_name, spec);
-char* pinecone_create_host_from_spec(int dimensions, VectorMetric metric, char* remote_index_name, char* spec) {
+char* pinecone_create_host_from_spec(int dimensions, VectorMetric metric, char* spec, Relation index) {
     char* host = palloc(100);
     const char* remote_metric_name = vector_metric_to_pinecone_metric[metric];
     cJSON* spec_json = cJSON_Parse(spec);
-    cJSON* create_response = remote_create_index(pinecone_api_key, remote_index_name, dimensions, remote_metric_name, spec_json);
+    // TODO: remote index name
+    cJSON* create_response = remote_create_index(pinecone_api_key, "my_index_name", dimensions, remote_metric_name, spec_json);
     host = cJSON_GetStringValue(cJSON_GetObjectItemCaseSensitive(create_response, "host"));
     return host;
     // now we wait until the remote index is done initializing
@@ -55,19 +56,15 @@ char* pinecone_create_host_from_spec(int dimensions, VectorMetric metric, char* 
     // return host;
 }
 
+void pinecone_validate_host_schema(char* host, int dimensions, VectorMetric metric, Relation index) {
+    // TODO: check that the host's schema matches the table
+    return;
+}
+
 int pinecone_count_live(char* host) {
     cJSON* index_stats_response;
     index_stats_response = remote_get_index_stats(pinecone_api_key, host);
     return cJSON_GetObjectItemCaseSensitive(index_stats_response, "totalVectorCount")->valueint;
-}
-
-void pinecone_check_credentials(void) {
-    if (pinecone_api_key == NULL || strlen(pinecone_api_key) == 0) {
-        ereport(ERROR,
-                (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-                 errmsg("Pinecone API key not set"),
-                 errhint("Set the Pinecone API key using the remote.pinecone_api_key GUC. E.g. ALTER SYSTEM SET remote.pinecone_api_key TO 'your-api-key'")));
-    }
 }
 
 PreparedQuery pinecone_prepare_query(Relation index, ScanKey keys, int nkeys, Vector* vec, int top_k) {
@@ -243,8 +240,8 @@ bool pinecone_bulk_upsert(char* host, PreparedBulkInsert prepared_vectors, int r
 
 RemoteIndexInterface pinecone_remote_index_interface = {
     // create index
-    .check_credentials = pinecone_check_credentials,
     .create_host_from_spec = pinecone_create_host_from_spec,
+    .validate_host_schema = pinecone_validate_host_schema,
     .count_live = pinecone_count_live,
     // upsert
     .begin_prepare_bulk_insert = pinecone_begin_prepare_bulk_insert,

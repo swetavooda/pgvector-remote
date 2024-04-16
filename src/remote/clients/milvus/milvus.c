@@ -7,9 +7,6 @@
 #include <stdlib.h>
 
 // CREATE
-void milvus_check_credentials(void) {
-    return;
-}
 
 // UPSERT
 void milvus_end_prepare_bulk_insert(PreparedBulkInsert prepared_vectors) {
@@ -22,8 +19,8 @@ void milvus_delete_prepared_bulk_insert(PreparedBulkInsert prepared_vectors) {
 
 RemoteIndexInterface milvus_remote_index_interface = {
     // create index
-    .check_credentials = milvus_check_credentials,
     .create_host_from_spec = milvus_create_host_from_spec,
+    .validate_host_schema = milvus_validate_host_schema,
     .count_live = milvus_count_live,
     // upsert
     .begin_prepare_bulk_insert = milvus_begin_prepare_bulk_insert,

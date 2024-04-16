@@ -1,4 +1,5 @@
 #include "src/remote/clients/pinecone/pinecone_api.h"
+#include "src/remote/clients/pinecone/pinecone.h" // pinecone_api_key
 #include "remote.h"
 
 #include "postgres.h"
@@ -10,6 +11,7 @@
 #include "utils/builtins.h"
 #include "executor/spi.h"
 #include "fmgr.h"
+
 
 
 PGDLLEXPORT PG_FUNCTION_INFO_V1(remote_indexes);

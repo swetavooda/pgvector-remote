@@ -16,6 +16,7 @@
 #include <utils/array.h>
 #include "access/relscan.h"
 #include "storage/block.h"
+#include <access/reloptions.h>
 
 #define REMOTE_DEFAULT_BUFFER_THRESHOLD 2000
 #define REMOTE_MIN_BUFFER_THRESHOLD 1
@@ -31,12 +32,7 @@
 #define RemotePageGetStaticMeta(page)	((RemoteStaticMetaPage) PageGetContents(page))
 #define RemotePageGetBufferMeta(page)    ((RemoteBufferMetaPage) PageGetContents(page))
 
-// remote specific limits
-
-#define REMOTE_NAME_MAX_LENGTH 45
-#define REMOTE_HOST_MAX_LENGTH 100
-
-#define DEFAULT_SPEC "{}"
+#define DEFAULT_SPEC ""
 #define DEFAULT_HOST ""
 
 // strategy numbers
@@ -45,6 +41,9 @@
 
 typedef char* PreparedBulkInsert;
 typedef char* PreparedQuery;
+
+// providers
+extern relopt_enum_elt_def provider_enum_options[];
 
 // structs
 typedef struct RemoteScanOpaqueData
@@ -63,11 +62,11 @@ typedef struct RemoteScanOpaqueData
 } RemoteScanOpaqueData;
 typedef RemoteScanOpaqueData *RemoteScanOpaque;
 
+#define REMOTE_HOST_MAX_LENGTH 100
 typedef struct RemoteStaticMetaPageData
 {
     int dimensions;
     char host[REMOTE_HOST_MAX_LENGTH + 1];
-    char remote_index_name[REMOTE_NAME_MAX_LENGTH + 1];
     VectorMetric metric;
 } RemoteStaticMetaPageData;
 typedef RemoteStaticMetaPageData *RemoteStaticMetaPage;
@@ -133,8 +132,8 @@ typedef struct RemoteBufferTuple
 
 // typedef for a function that maps an int to an int
 
-typedef void (*ri_check_credentials_function)(void);
-typedef char* (*ri_create_host_from_spec_function)(int dimensions, VectorMetric metric, char* remote_index_name, char* spec);
+typedef char* (*ri_create_host_from_spec_function)(int dimensions, VectorMetric metric, char* spec, Relation index);
+typedef void (*ri_validate_host_schema_function)(char* host, int dimensions, VectorMetric metric, Relation index);
 typedef void (*ri_delete_all_function)(char* host);
 typedef int (*ri_count_live_function)(char* host);
 
@@ -152,8 +151,8 @@ typedef bool (*ri_bulk_upsert_function)(char* host, PreparedBulkInsert prepared_
 typedef struct
 {
     // create index
-    ri_check_credentials_function check_credentials;
     ri_create_host_from_spec_function create_host_from_spec;
+    ri_validate_host_schema_function validate_host_schema;
     ri_delete_all_function delete_all;
     ri_count_live_function count_live;
     // insert
@@ -208,7 +207,7 @@ char* get_remote_index_name(Relation index);
 IndexBuildResult *remote_build(Relation heap, Relation index, IndexInfo *indexInfo);
 void InsertBaseTable(Relation heap, Relation index, IndexInfo *indexInfo, char* host, IndexBuildResult *result, RemoteIndexInterface* remote_index_interface);
 void remote_build_callback(Relation index, ItemPointer tid, Datum *values, bool *isnull, bool tupleIsAlive, void *state);
-void InitIndexPages(Relation index, VectorMetric metric, int dimensions, char *remote_index_name, char *host);
+void InitIndexPages(Relation index, VectorMetric metric, int dimensions,  char *host);
 void remote_buildempty(Relation index);
 void no_buildempty(Relation index); // for some reason this is never called even when the base table is empty
 VectorMetric get_opclass_metric(Relation index);

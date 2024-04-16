@@ -166,7 +166,7 @@ void load_tids_into_sort(Relation index, Tuplesortstate *sortstate, RemoteScanOp
         call_again = false;
         found = baseTableRel->rd_tableam->index_fetch_tuple(fetchData, tid, snapshot, base_table_slot, &call_again, &all_dead);
         // all_dead tells us if the tuple is dead to all backends meanning that our index can safely drop it.
-        // TODO: we can use this to cleanup pinecone on the fly
+        // TODO: we can use this to cleanup the remote index on the fly
         if (!found) {
             if (!all_dead) {
                 // every tuple we request should either be found or all_dead

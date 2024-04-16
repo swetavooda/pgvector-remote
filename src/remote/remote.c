@@ -1,7 +1,6 @@
 #include "remote.h"
 
 #include "utils/guc.h"
-#include <access/reloptions.h>
 
 #include <float.h>  
 
@@ -22,13 +21,6 @@ bool remote_use_mock_response = false;
 
 // todo: principled batch sizes. Do we ever want the buffer to be bigger than a multi-insert? Possibly if we want to let the buffer fill up when the remote index is down.
 static relopt_kind remote_relopt_kind;
-
-// we need to make sure that the enum_options don't go out of scope
-relopt_enum_elt_def provider_enum_options[] = {
-    {"pinecone", PINECONE_PROVIDER},
-    {"milvus", MILVUS_PROVIDER},
-    {NULL, 0}
-};
 
 
 void RemoteInit(void)

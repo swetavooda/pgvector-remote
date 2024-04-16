@@ -7,6 +7,9 @@
 #include "src/vector.h"
 #include "postgres.h" // bool
 
+#define PINECONE_NAME_MAX_LENGTH 45
+#define PINECONE_HOST_MAX_LENGTH 100
+
 // GUC
 extern char* pinecone_api_key;
 
@@ -18,7 +21,8 @@ ItemPointerData* pinecone_extract_ctids_from_fetch_response(cJSON* fetch_respons
 
 // interface
 // create
-char* pinecone_create_host_from_spec(int dimensions, VectorMetric metric, char* remote_index_name, char* spec);
+char* pinecone_create_host_from_spec(int dimensions, VectorMetric metric, char* spec, Relation index);
+void pinecone_validate_host_schema(char* host, int dimensions, VectorMetric metric, Relation index);
 int pinecone_count_live(char* host);
 void pinecone_check_credentials(void);
 // bulk insert

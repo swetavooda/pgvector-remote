@@ -11,45 +11,6 @@
 // LockRelationForExtension in lmgr.h
 #include <storage/lmgr.h>
 
-
-void generateRandomAlphanumeric(char *s, const int length) {
-    char charset[] = "0123456789abcdefghijklmnopqrstuvwxyz";
-    if (length) {
-        // Seed the random number generator
-        srand((unsigned int)time(NULL));
-        for (int i = 0; i < length; i++) {
-            int key = rand() % (int)(sizeof(charset) - 1);
-            *s++ = charset[key];
-        }
-        *s = '\0'; // Null-terminate the string
-    }
-}
-
-
-char* get_remote_index_name(Relation index) {
-    // TODO: there is no reason to keep the remote index name
-    char* remote_index_name = palloc(REMOTE_NAME_MAX_LENGTH + 1); // remote's maximum index name length is 45
-    char* index_name;
-    char random_postfix[5];
-    int name_length;
-    // create the remote_index_name like pgvector-{oid}-{index_name}-{random_postfix}
-    index_name = NameStr(index->rd_rel->relname);
-    generateRandomAlphanumeric(random_postfix, 4);
-    name_length = snprintf(remote_index_name, REMOTE_NAME_MAX_LENGTH+1, "pgvector-%u-%s-%s", index->rd_id, index_name, random_postfix);
-    if (name_length > REMOTE_NAME_MAX_LENGTH) {
-        ereport(ERROR, (errcode(ERRCODE_NAME_TOO_LONG), errmsg("Remote index name too long"), errhint("The remote index name is %s... and is %d characters long. The maximum length is 45 characters.", remote_index_name, name_length)));
-    }
-    // check that all chars are alphanumeric or hyphen
-    for (int i = 0; i < name_length; i++) {
-        if (!isalnum(remote_index_name[i]) && remote_index_name[i] != '-') {
-            elog(DEBUG1, "Invalid character: %c", remote_index_name[i]);
-            ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE), errmsg("Remote index name (%s) contains invalid character %c", remote_index_name, remote_index_name[i]), errhint("The remote index name can only contain alphanumeric characters and hyphens.")));
-        }
-    }
-    return remote_index_name;
-}
-
-
 IndexBuildResult *remote_build(Relation heap, Relation index, IndexInfo *indexInfo)
 {
     RemoteOptions *opts = (RemoteOptions *) index->rd_options;
@@ -57,15 +18,9 @@ IndexBuildResult *remote_build(Relation heap, Relation index, IndexInfo *indexIn
     VectorMetric metric = get_opclass_metric(index);
     char* spec = GET_STRING_RELOPTION(opts, spec);
     int dimensions = TupleDescAttr(index->rd_att, 0)->atttypmod;
-    char* remote_index_name = get_remote_index_name(index);
     char* host = GET_STRING_RELOPTION(opts, host);
     // provider
     RemoteIndexInterface* remote_index_interface = remote_index_interfaces[opts->provider];
-
-    // check credentials
-    if (remote_index_interface->check_credentials != NULL) {
-        remote_index_interface->check_credentials();
-    }
 
     // The typical arrangement is that the user must provide exactly one of host and spec.
 
@@ -77,18 +32,20 @@ IndexBuildResult *remote_build(Relation heap, Relation index, IndexInfo *indexIn
         }
         // verify that the host is empty (unless we are skipping the build)
         if (!opts->skip_build) {
-            bool n_live = remote_index_interface->count_live(host);
+            int n_live = remote_index_interface->count_live(host);
             if (n_live != 0) {
-                ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE), errmsg("Host is not empty"), errhint("You must provide an empty host if you are not skipping the build. But the host %s contains %d vectors.", host, n_live)));
+                ereport(WARNING, (errcode(ERRCODE_INVALID_PARAMETER_VALUE), errmsg("Host is not empty"), errhint("You must provide an empty host if you are not skipping the build. But the host %s contains %d vectors.", host, n_live)));
             }
         }
+        // validate that the host schema matches the index schema
+        remote_index_interface->validate_host_schema(host, dimensions, metric, index);
     } else {
         // create a remote index from the spec
-        host = remote_index_interface->create_host_from_spec(dimensions, metric, remote_index_name, spec);
+        host = remote_index_interface->create_host_from_spec(dimensions, metric, spec, index);
     }
 
     // init the index pages: static meta, buffer meta, and buffer head
-    InitIndexPages(index, metric, dimensions, remote_index_name, host);
+    InitIndexPages(index, metric, dimensions,  host);
 
     // iterate through the base table and upsert the vectors to the remote index
     result->heap_tuples = 0;
@@ -153,7 +110,7 @@ void remote_build_callback(Relation index, ItemPointer tid, Datum *values, bool 
  * Create the buffer meta page
  * Create the buffer head
  */
-void InitIndexPages(Relation index, VectorMetric metric, int dimensions, char *remote_index_name, char *host) {
+void InitIndexPages(Relation index, VectorMetric metric, int dimensions,  char *host) {
     Buffer meta_buf, buffer_meta_buf, buffer_head_buf;
     Page meta_page, buffer_meta_page, buffer_head_page;
     RemoteStaticMetaPage remote_static_meta_page;
@@ -185,16 +142,11 @@ void InitIndexPages(Relation index, VectorMetric metric, int dimensions, char *r
     // You must set pd_lower because GenericXLog ignores any changes in the free space between pd_lower and pd_upper
     ((PageHeader) meta_page)->pd_lower = ((char *) remote_static_meta_page - (char *) meta_page) + sizeof(RemoteStaticMetaPageData);
 
-    // copy host and remote_index_name, checking for length
+    // copy host, checking for length
     if (strlcpy(remote_static_meta_page->host, host, REMOTE_HOST_MAX_LENGTH) > REMOTE_HOST_MAX_LENGTH) {
         ereport(ERROR, (errcode(ERRCODE_NAME_TOO_LONG), errmsg("Host name too long"),
                         errhint("The host name is %s... and is %d characters long. The maximum length is %d characters.",
                                 host, (int) strlen(host), REMOTE_HOST_MAX_LENGTH)));
-    }
-    if (strlcpy(remote_static_meta_page->remote_index_name, remote_index_name, REMOTE_NAME_MAX_LENGTH) > REMOTE_NAME_MAX_LENGTH) {
-        ereport(ERROR, (errcode(ERRCODE_NAME_TOO_LONG), errmsg("Remote index name too long"),
-                        errhint("The remote index name is %s... and is %d characters long. The maximum length is %d characters.",
-                                remote_index_name, (int) strlen(remote_index_name), REMOTE_NAME_MAX_LENGTH)));
     }
 
     // CREATE THE BUFFER META PAGE
