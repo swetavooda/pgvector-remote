@@ -385,6 +385,16 @@ CREATE OPERATOR CLASS list_of_strings_remote_ops
 	DEFAULT FOR TYPE text[] USING remote AS
 	OPERATOR 7 && (anyarray, anyarray), -- overlap
 	OPERATOR 2 @> (anyarray, anyarray);
+-- list of ints
+CREATE OPERATOR CLASS list_of_ints_remote_ops
+	DEFAULT FOR TYPE int[] USING remote AS
+	OPERATOR 7 && (anyarray, anyarray), -- overlap
+	OPERATOR 2 @> (anyarray, anyarray);
+-- list of bigints
+CREATE OPERATOR CLASS list_of_bigints_remote_ops
+	DEFAULT FOR TYPE bigint[] USING remote AS
+	OPERATOR 7 && (anyarray, anyarray), -- overlap
+	OPERATOR 2 @> (anyarray, anyarray);
 
 -- int opclass for remote
 CREATE OPERATOR CLASS int_remote_ops
