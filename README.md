@@ -58,6 +58,15 @@ sudo apt-get install libcurl4-openssl-dev
 
 Then follow the [installation instructions for pgvector](https://github.com/pgvector/pgvector?tab=readme-ov-file#installation-notes---linux-and-mac), using the `feature/remote_indexes` of this repository.
 
+### Milvus Installation
+- build the milvus c++ sdk
+- `git clone https://github.com/oscarlaird/milvus-sdk-cpp`
+- `sudo apt install libgrpc++-dev libgrpc-dev libprotobuf-dev`
+- `git submodule update --init`
+- `make && sudo make install`
+
+
+
 ## Configuration
 
 Set the pinecone API key in the postgres configuration. For example,
