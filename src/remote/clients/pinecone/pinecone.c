@@ -34,7 +34,7 @@ const char* vector_metric_to_pinecone_metric[VECTOR_METRIC_COUNT] = {
     "dotproduct"
 };
 
-void pinecone_spec_validator(char* spec) {
+void pinecone_spec_validator(const char* spec) {
     if (spec == NULL || cJSON_Parse(spec) == NULL) {
         ereport(ERROR,
                 (errcode(ERRCODE_INVALID_PARAMETER_VALUE),

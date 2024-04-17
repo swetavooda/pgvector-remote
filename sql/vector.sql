@@ -829,6 +829,17 @@ CREATE OPERATOR CLASS sparsevec_cosine_ops
 	FUNCTION 1 sparsevec_negative_inner_product(sparsevec, sparsevec),
 	FUNCTION 2 l2_norm(sparsevec);
 
+-- remote name functions
+
+CREATE FUNCTION vector_l2_metric_name() RETURNS int4
+	AS 'MODULE_PATHNAME' LANGUAGE C IMMUTABLE STRICT PARALLEL SAFE;
+
+CREATE FUNCTION vector_ip_metric_name() RETURNS int4
+	AS 'MODULE_PATHNAME' LANGUAGE C IMMUTABLE STRICT PARALLEL SAFE;
+
+CREATE FUNCTION vector_cosine_metric_name() RETURNS int4
+	AS 'MODULE_PATHNAME' LANGUAGE C IMMUTABLE STRICT PARALLEL SAFE;
+
 -- remote opclasses
 
 CREATE OPERATOR CLASS vector_l2_ops
