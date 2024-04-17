@@ -301,7 +301,9 @@ bool remote_gettuple(IndexScanDesc scan, ScanDirection dir)
         scan->xs_recheck = false;
         so->more_remote_tuples = tuplesort_gettupleslot(so->remote_sortstate, true, false, so->remote_sortslot, NULL);
     }
-
+    // TODO: we could simplify by setting xs_recheckorderby to make PG reorder all, say, 20K tuples
+    // This way we avoid looking up and computing the distance for each tuple twice
+    // Also: then we aren't responsible for reporting costestimates for disk reads
     scan->xs_recheckorderby = false; // remote returns an approximate distance which we need to recheck.
     return true;
 }

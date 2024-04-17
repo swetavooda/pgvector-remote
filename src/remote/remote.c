@@ -5,13 +5,15 @@
 #include <float.h>  
 
 #include "remote/remote.h"
+#include "utils/rel.h"
+
+#include "utils/selfuncs.h" // cost estimate utilities
 
 #if PG_VERSION_NUM < 150000
 #define MarkGUCPrefixReserved(x) EmitWarningsOnPlaceholders(x)
 #endif
 
 int remote_top_k = 1000; // todo: dynamic meta w/ helper fn
-int remote_vectors_per_request = 100;  // todo: static meta
 int remote_requests_per_batch = 10;  // todo: static meta
 int remote_max_buffer_scan = 10000; // maximum number of tuples to search in the buffer // todo: dynamic meta w/ helper fn
 int remote_max_fetched_vectors_for_liveness_check = 10;  // todo: dynamic meta w/ helper fn
@@ -35,7 +37,7 @@ void RemoteInit(void)
                             NULL,
                             AccessExclusiveLock);
     add_enum_reloption(remote_relopt_kind, "provider",
-                            "Remote provider. Currently only 'remote' is supported",
+                            "Remote provider. Currently pinecone and milvus are supported",
                             provider_enum_options,
                             PINECONE_PROVIDER,
                             "detail msg",
@@ -51,16 +53,14 @@ void RemoteInit(void)
     add_bool_reloption(remote_relopt_kind, "skip_build",
                             "Do not upload vectors from the base table.",
                             false, AccessExclusiveLock);
+    add_int_reloption(remote_relopt_kind, "batch_size",
+                            "Number of vectors in each buffer batch. (N.B. pinecone will split this into smaller concurrent requests based on remote.pinecone_vectors_per_request)",
+                            1000, 1, 10000, AccessExclusiveLock);
     // todo: allow for specifying a hostname instead of asking to create it
     // todo: you can have a relopts_validator which validates the whole relopt set. This could be used to check that exactly one of spec or host is set
     DefineCustomIntVariable("remote.top_k", "Remote top k", "Remote top k",
                             &remote_top_k,
                             500, 1, 10000,
-                            PGC_USERSET,
-                            0, NULL, NULL, NULL);
-    DefineCustomIntVariable("remote.vectors_per_request", "Remote vectors per request", "Remote vectors per request",
-                            &remote_vectors_per_request,
-                            100, 1, 1000,
                             PGC_USERSET,
                             0, NULL, NULL, NULL);
     DefineCustomIntVariable("remote.requests_per_batch", "Remote requests per batch", "Remote requests per batch",
@@ -93,12 +93,40 @@ void no_costestimate(PlannerInfo *root, IndexPath *path, double loop_count,
 					Selectivity *indexSelectivity, double *indexCorrelation,
 					double *indexPages)
 {
-    // todo: consider running a health check on the remote index and return infinity if it is not healthy
-    if (list_length(path->indexorderbycols) == 0 || linitial_int(path->indexorderbycols) != 0) {
-        elog(DEBUG1, "Remote index must be ordered by distance. Returning infinity.");
-        *indexTotalCost = DBL_MAX;
-        return;
-    }
+    // adapted from hnsw_costestimate
+	GenericCosts costs;
+    // open the index to read the provider // TODO: is this expensive?
+    Oid indexoid = path->indexinfo->indexoid;
+    Relation index = index_open(indexoid, AccessShareLock);
+    RemoteOptions* opts = (RemoteOptions *) index->rd_options;
+    RemoteIndexInterface* remote_index_interface = remote_index_interfaces[opts->provider];
+    index_close(index, AccessShareLock);
+
+	/* Never use index without order */
+	if (path->indexorderbys == NULL)
+	{
+		*indexStartupCost = DBL_MAX;
+		*indexTotalCost = DBL_MAX;
+		*indexSelectivity = 0;
+		*indexCorrelation = 0;
+		*indexPages = 0;
+		return;
+	}
+
+	MemSet(&costs, 0, sizeof(costs));
+
+	/* TODO Improve estimate of visited tuples (currently underestimates) */
+	/* Account for number of tuples (or entry level), m, and ef_search */
+	costs.numIndexTuples = remote_index_interface->est_network_cost();
+
+	genericcostestimate(root, path, loop_count, &costs);
+
+	/* Use total cost since most work happens before first tuple is returned */
+	*indexStartupCost = costs.indexTotalCost;
+	*indexTotalCost = costs.indexTotalCost;
+	*indexSelectivity = costs.indexSelectivity;
+	*indexCorrelation = costs.indexCorrelation;
+	*indexPages = costs.numIndexPages;
 };
 
 bytea * remote_options(Datum reloptions, bool validate)
@@ -108,7 +136,8 @@ bytea * remote_options(Datum reloptions, bool validate)
 		{"provider", RELOPT_TYPE_ENUM, offsetof(RemoteOptions, provider)},
         {"host", RELOPT_TYPE_STRING, offsetof(RemoteOptions, host)},
         {"overwrite", RELOPT_TYPE_BOOL, offsetof(RemoteOptions, overwrite)},
-        {"skip_build", RELOPT_TYPE_BOOL, offsetof(RemoteOptions, skip_build)}
+        {"skip_build", RELOPT_TYPE_BOOL, offsetof(RemoteOptions, skip_build)},
+        {"batch_size", RELOPT_TYPE_INT, offsetof(RemoteOptions, batch_size)}
 
 	};
     static bool first_time = true;

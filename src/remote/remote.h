@@ -86,6 +86,7 @@ typedef struct RemoteOptions
     int         host;
     bool        overwrite; // todo: should this be int?
     bool        skip_build;
+    int         batch_size;
 }			RemoteOptions;
 
 typedef struct RemoteCheckpoint
@@ -130,23 +131,21 @@ typedef struct RemoteBufferTuple
 #define REMOTE_BUFFER_TUPLE_VACUUMED 1 << 0
 
 
-// typedef for a function that maps an int to an int
-
+// create
 typedef char* (*ri_create_host_from_spec_function)(int dimensions, VectorMetric metric, char* spec, Relation index);
 typedef void (*ri_validate_host_schema_function)(char* host, int dimensions, VectorMetric metric, Relation index);
 typedef void (*ri_delete_all_function)(char* host);
 typedef int (*ri_count_live_function)(char* host);
-
-typedef PreparedQuery (*ri_prepare_query_function)(Relation index, ScanKey keys, int nkeys, Vector* vector, int top_k);
-
-typedef ItemPointerData* (*ri_query_with_fetch_function)(char* host, int top_k, PreparedQuery query, bool include_vector_ids, RemoteCheckpoint* checkpoints, int n_checkpoints, RemoteCheckpoint* best_checkpoint_return, int* n_remote_tids);
-
+typedef int (*ri_est_network_cost_function)(void);
 // insert
-typedef PreparedBulkInsert (*ri_begin_prepare_bulk_insert_function)(TupleDesc tupdesc);
+typedef PreparedBulkInsert (*ri_begin_prepare_bulk_insert_function)(Relation index);
 typedef void (*ri_append_prepare_bulk_insert_function)(PreparedBulkInsert prepared_vectors, TupleDesc tupdesc, Datum* values, bool* nulls, ItemPointer ctid);
 typedef void (*ri_end_prepare_bulk_insert_function)(PreparedBulkInsert prepared_vectors);
 typedef void (*ri_delete_prepared_bulk_insert_function)(PreparedBulkInsert prepared_vectors);
-typedef bool (*ri_bulk_upsert_function)(char* host, PreparedBulkInsert prepared_vectors, int remote_vectors_per_request, int n_prepared_tuples);
+typedef bool (*ri_bulk_upsert_function)(char* host, PreparedBulkInsert prepared_vectors, int n_prepared_tuples);
+// query
+typedef PreparedQuery (*ri_prepare_query_function)(Relation index, ScanKey keys, int nkeys, Vector* vector, int top_k);
+typedef ItemPointerData* (*ri_query_with_fetch_function)(char* host, int top_k, PreparedQuery query, bool include_vector_ids, RemoteCheckpoint* checkpoints, int n_checkpoints, RemoteCheckpoint* best_checkpoint_return, int* n_remote_tids);
 
 typedef struct
 {
@@ -155,6 +154,7 @@ typedef struct
     ri_validate_host_schema_function validate_host_schema;
     ri_delete_all_function delete_all;
     ri_count_live_function count_live;
+    ri_est_network_cost_function est_network_cost;
     // insert
     ri_begin_prepare_bulk_insert_function begin_prepare_bulk_insert;
     ri_append_prepare_bulk_insert_function append_prepare_bulk_insert;
@@ -175,16 +175,15 @@ typedef struct RemoteBuildState
     int n_prepared_tuples; // number of prepared tuples
     char host[100];
     RemoteIndexInterface* remote_index_interface;
+    int batch_size;
 } RemoteBuildState;
 
 
 // GUC variables
 extern int remote_top_k;
-extern int remote_vectors_per_request;
 extern int remote_requests_per_batch;
 extern int remote_max_buffer_scan;
 extern int remote_max_fetched_vectors_for_liveness_check;
-#define REMOTE_BATCH_SIZE remote_vectors_per_request * remote_requests_per_batch
 // GUC variables for testing
 #ifdef REMOTE_MOCK
 extern bool remote_use_mock_response;
