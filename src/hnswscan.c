@@ -41,29 +41,6 @@ GetScanItems(IndexScanDesc scan, Datum q)
 }
 
 /*
- * Get dimensions from metapage
- */
-static int
-GetDimensions(Relation index)
-{
-	Buffer		buf;
-	Page		page;
-	HnswMetaPage metap;
-	int			dimensions;
-
-	buf = ReadBuffer(index, HNSW_METAPAGE_BLKNO);
-	LockBuffer(buf, BUFFER_LOCK_SHARE);
-	page = BufferGetPage(buf);
-	metap = HnswPageGetMeta(page);
-
-	dimensions = metap->dimensions;
-
-	UnlockReleaseBuffer(buf);
-
-	return dimensions;
-}
-
-/*
  * Get scan value
  */
 static Datum
@@ -73,7 +50,7 @@ GetScanValue(IndexScanDesc scan)
 	Datum		value;
 
 	if (scan->orderByData->sk_flags & SK_ISNULL)
-		value = PointerGetDatum(InitVector(GetDimensions(scan->indexRelation)));
+		value = PointerGetDatum(NULL);
 	else
 	{
 		value = scan->orderByData->sk_argument;
@@ -84,7 +61,7 @@ GetScanValue(IndexScanDesc scan)
 
 		/* Fine if normalization fails */
 		if (so->normprocinfo != NULL)
-			HnswNormValue(so->normprocinfo, so->collation, &value, NULL);
+			value = HnswNormValue(value, HnswGetType(scan->indexRelation));
 	}
 
 	return value;
@@ -181,6 +158,10 @@ hnswgettuple(IndexScanDesc scan, ScanDirection dir)
 		UnlockPage(scan->indexRelation, HNSW_SCAN_LOCK, ShareLock);
 
 		so->first = false;
+
+#if defined(HNSW_MEMORY) && PG_VERSION_NUM >= 130000
+		elog(INFO, "memory: %zu MB", MemoryContextMemAllocated(so->tmpCtx, false) / (1024 * 1024));
+#endif
 	}
 
 	while (list_length(so->w) > 0)

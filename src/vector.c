@@ -2,15 +2,19 @@
 
 #include <math.h>
 
+#include "bitvector.h"
 #include "catalog/pg_type.h"
 #include "common/shortest_dec.h"
 #include "fmgr.h"
+#include "halfutils.h"
+#include "halfvec.h"
 #include "hnsw.h"
 #include "ivfflat.h"
 #include "remote/remote.h"
 #include "lib/stringinfo.h"
 #include "libpq/pqformat.h"
 #include "port.h"				/* for strtof() */
+#include "sparsevec.h"
 #include "utils/array.h"
 #include "utils/builtins.h"
 #include "utils/float.h"
@@ -30,6 +34,13 @@
 #define STATE_DIMS(x) (ARR_DIMS(x)[0] - 1)
 #define CreateStateDatums(dim) palloc(sizeof(Datum) * (dim + 1))
 
+/* target_clones requires glibc */
+#if defined(__x86_64__) && defined(__gnu_linux__) && defined(__has_attribute) && __has_attribute(target_clones) && !defined(__FMA__)
+#define VECTOR_DISPATCH __attribute__((target_clones("default", "fma")))
+#else
+#define VECTOR_DISPATCH
+#endif
+
 PG_MODULE_MAGIC;
 
 /*
@@ -39,6 +50,7 @@ PGDLLEXPORT void _PG_init(void);
 void
 _PG_init(void)
 {
+	HalfvecInit();
 	HnswInit();
 	IvfflatInit();
 	RemoteInit();	
@@ -178,27 +190,33 @@ vector_in(PG_FUNCTION_ARGS)
 	int32		typmod = PG_GETARG_INT32(2);
 	float		x[VECTOR_MAX_DIM];
 	int			dim = 0;
-	char	   *pt;
-	char	   *stringEnd;
+	char	   *pt = lit;
 	Vector	   *result;
-	char	   *litcopy = pstrdup(lit);
-	char	   *str = litcopy;
 
-	while (vector_isspace(*str))
-		str++;
+	while (vector_isspace(*pt))
+		pt++;
 
-	if (*str != '[')
+	if (*pt != '[')
 		ereport(ERROR,
 				(errcode(ERRCODE_INVALID_TEXT_REPRESENTATION),
-				 errmsg("malformed vector literal: \"%s\"", lit),
+				 errmsg("invalid input syntax for type vector: \"%s\"", lit),
 				 errdetail("Vector contents must start with \"[\".")));
 
-	str++;
-	pt = strtok(str, ",");
-	stringEnd = pt;
+	pt++;
 
-	while (pt != NULL && *stringEnd != ']')
+	while (vector_isspace(*pt))
+		pt++;
+
+	if (*pt == ']')
+		ereport(ERROR,
+				(errcode(ERRCODE_DATA_EXCEPTION),
+				 errmsg("vector must have at least 1 dimension")));
+
+	for (;;)
 	{
+		float		val;
+		char	   *stringEnd;
+
 		if (dim == VECTOR_MAX_DIM)
 			ereport(ERROR,
 					(errcode(ERRCODE_PROGRAM_LIMIT_EXCEEDED),
@@ -213,61 +231,55 @@ vector_in(PG_FUNCTION_ARGS)
 					(errcode(ERRCODE_INVALID_TEXT_REPRESENTATION),
 					 errmsg("invalid input syntax for type vector: \"%s\"", lit)));
 
+		errno = 0;
+
 		/* Use strtof like float4in to avoid a double-rounding problem */
-		x[dim] = strtof(pt, &stringEnd);
-		CheckElement(x[dim]);
-		dim++;
+		/* Postgres sets LC_NUMERIC to C on startup */
+		val = strtof(pt, &stringEnd);
 
 		if (stringEnd == pt)
 			ereport(ERROR,
 					(errcode(ERRCODE_INVALID_TEXT_REPRESENTATION),
 					 errmsg("invalid input syntax for type vector: \"%s\"", lit)));
 
-		while (vector_isspace(*stringEnd))
-			stringEnd++;
+		/* Check for range error like float4in */
+		if (errno == ERANGE && isinf(val))
+			ereport(ERROR,
+					(errcode(ERRCODE_NUMERIC_VALUE_OUT_OF_RANGE),
+					 errmsg("\"%s\" is out of range for type vector", pnstrdup(pt, stringEnd - pt))));
 
-		if (*stringEnd != '\0' && *stringEnd != ']')
+		CheckElement(val);
+		x[dim++] = val;
+
+		pt = stringEnd;
+
+		while (vector_isspace(*pt))
+			pt++;
+
+		if (*pt == ',')
+			pt++;
+		else if (*pt == ']')
+		{
+			pt++;
+			break;
+		}
+		else
 			ereport(ERROR,
 					(errcode(ERRCODE_INVALID_TEXT_REPRESENTATION),
 					 errmsg("invalid input syntax for type vector: \"%s\"", lit)));
-
-		pt = strtok(NULL, ",");
 	}
-
-	if (stringEnd == NULL || *stringEnd != ']')
-		ereport(ERROR,
-				(errcode(ERRCODE_INVALID_TEXT_REPRESENTATION),
-				 errmsg("malformed vector literal: \"%s\"", lit),
-				 errdetail("Unexpected end of input.")));
-
-	stringEnd++;
 
 	/* Only whitespace is allowed after the closing brace */
-	while (vector_isspace(*stringEnd))
-		stringEnd++;
+	while (vector_isspace(*pt))
+		pt++;
 
-	if (*stringEnd != '\0')
+	if (*pt != '\0')
 		ereport(ERROR,
 				(errcode(ERRCODE_INVALID_TEXT_REPRESENTATION),
-				 errmsg("malformed vector literal: \"%s\"", lit),
+				 errmsg("invalid input syntax for type vector: \"%s\"", lit),
 				 errdetail("Junk after closing right brace.")));
 
-	/* Ensure no consecutive delimiters since strtok skips */
-	for (pt = lit + 1; *pt != '\0'; pt++)
-	{
-		if (pt[-1] == ',' && *pt == ',')
-			ereport(ERROR,
-					(errcode(ERRCODE_INVALID_TEXT_REPRESENTATION),
-					 errmsg("malformed vector literal: \"%s\"", lit)));
-	}
-
-	if (dim < 1)
-		ereport(ERROR,
-				(errcode(ERRCODE_DATA_EXCEPTION),
-				 errmsg("vector must have at least 1 dimension")));
-
-	pfree(litcopy);
-
+	CheckDim(dim);
 	CheckExpectedDim(typmod, dim);
 
 	result = InitVector(dim);
@@ -276,6 +288,9 @@ vector_in(PG_FUNCTION_ARGS)
 
 	PG_RETURN_POINTER(result);
 }
+
+#define AppendChar(ptr, c) (*(ptr)++ = (c))
+#define AppendFloat(ptr, f) ((ptr) += float_to_shortest_decimal_bufn((f), (ptr)))
 
 /*
  * Convert internal representation to textual representation
@@ -288,7 +303,6 @@ vector_out(PG_FUNCTION_ARGS)
 	int			dim = vector->dim;
 	char	   *buf;
 	char	   *ptr;
-	int			n;
 
 	/*
 	 * Need:
@@ -303,21 +317,17 @@ vector_out(PG_FUNCTION_ARGS)
 	buf = (char *) palloc(FLOAT_SHORTEST_DECIMAL_LEN * dim + 2);
 	ptr = buf;
 
-	*ptr = '[';
-	ptr++;
+	AppendChar(ptr, '[');
+
 	for (int i = 0; i < dim; i++)
 	{
 		if (i > 0)
-		{
-			*ptr = ',';
-			ptr++;
-		}
+			AppendChar(ptr, ',');
 
-		n = float_to_shortest_decimal_bufn(vector->x[i], ptr);
-		ptr += n;
+		AppendFloat(ptr, vector->x[i]);
 	}
-	*ptr = ']';
-	ptr++;
+
+	AppendChar(ptr, ']');
 	*ptr = '\0';
 
 	PG_FREE_IF_COPY(vector, 0);
@@ -558,6 +568,44 @@ vector_to_float4(PG_FUNCTION_ARGS)
 }
 
 /*
+ * Convert half vector to vector
+ */
+PGDLLEXPORT PG_FUNCTION_INFO_V1(halfvec_to_vector);
+Datum
+halfvec_to_vector(PG_FUNCTION_ARGS)
+{
+	HalfVector *vec = PG_GETARG_HALFVEC_P(0);
+	int32		typmod = PG_GETARG_INT32(1);
+	Vector	   *result;
+
+	CheckDim(vec->dim);
+	CheckExpectedDim(typmod, vec->dim);
+
+	result = InitVector(vec->dim);
+
+	for (int i = 0; i < vec->dim; i++)
+		result->x[i] = HalfToFloat4(vec->x[i]);
+
+	PG_RETURN_POINTER(result);
+}
+
+VECTOR_DISPATCH static float
+VectorL2SquaredDistance(int dim, float *ax, float *bx)
+{
+	float		distance = 0.0;
+
+	/* Auto-vectorized */
+	for (int i = 0; i < dim; i++)
+	{
+		float		diff = ax[i] - bx[i];
+
+		distance += diff * diff;
+	}
+
+	return distance;
+}
+
+/*
  * Get the L2 distance between vectors
  */
 PGDLLEXPORT PG_FUNCTION_INFO_V1(l2_distance);
@@ -566,21 +614,10 @@ l2_distance(PG_FUNCTION_ARGS)
 {
 	Vector	   *a = PG_GETARG_VECTOR_P(0);
 	Vector	   *b = PG_GETARG_VECTOR_P(1);
-	float	   *ax = a->x;
-	float	   *bx = b->x;
-	float		distance = 0.0;
-	float		diff;
 
 	CheckDims(a, b);
 
-	/* Auto-vectorized */
-	for (int i = 0; i < a->dim; i++)
-	{
-		diff = ax[i] - bx[i];
-		distance += diff * diff;
-	}
-
-	PG_RETURN_FLOAT8(sqrt((double) distance));
+	PG_RETURN_FLOAT8(sqrt((double) VectorL2SquaredDistance(a->dim, a->x, b->x)));
 }
 
 /*
@@ -593,21 +630,22 @@ vector_l2_squared_distance(PG_FUNCTION_ARGS)
 {
 	Vector	   *a = PG_GETARG_VECTOR_P(0);
 	Vector	   *b = PG_GETARG_VECTOR_P(1);
-	float	   *ax = a->x;
-	float	   *bx = b->x;
-	float		distance = 0.0;
-	float		diff;
 
 	CheckDims(a, b);
 
-	/* Auto-vectorized */
-	for (int i = 0; i < a->dim; i++)
-	{
-		diff = ax[i] - bx[i];
-		distance += diff * diff;
-	}
+	PG_RETURN_FLOAT8((double) VectorL2SquaredDistance(a->dim, a->x, b->x));
+}
 
-	PG_RETURN_FLOAT8((double) distance);
+VECTOR_DISPATCH static float
+VectorInnerProduct(int dim, float *ax, float *bx)
+{
+	float		distance = 0.0;
+
+	/* Auto-vectorized */
+	for (int i = 0; i < dim; i++)
+		distance += ax[i] * bx[i];
+
+	return distance;
 }
 
 /*
@@ -619,17 +657,10 @@ inner_product(PG_FUNCTION_ARGS)
 {
 	Vector	   *a = PG_GETARG_VECTOR_P(0);
 	Vector	   *b = PG_GETARG_VECTOR_P(1);
-	float	   *ax = a->x;
-	float	   *bx = b->x;
-	float		distance = 0.0;
 
 	CheckDims(a, b);
 
-	/* Auto-vectorized */
-	for (int i = 0; i < a->dim; i++)
-		distance += ax[i] * bx[i];
-
-	PG_RETURN_FLOAT8((double) distance);
+	PG_RETURN_FLOAT8((double) VectorInnerProduct(a->dim, a->x, b->x));
 }
 
 /*
@@ -641,17 +672,29 @@ vector_negative_inner_product(PG_FUNCTION_ARGS)
 {
 	Vector	   *a = PG_GETARG_VECTOR_P(0);
 	Vector	   *b = PG_GETARG_VECTOR_P(1);
-	float	   *ax = a->x;
-	float	   *bx = b->x;
-	float		distance = 0.0;
 
 	CheckDims(a, b);
 
-	/* Auto-vectorized */
-	for (int i = 0; i < a->dim; i++)
-		distance += ax[i] * bx[i];
+	PG_RETURN_FLOAT8((double) -VectorInnerProduct(a->dim, a->x, b->x));
+}
 
-	PG_RETURN_FLOAT8((double) distance * -1);
+VECTOR_DISPATCH static double
+VectorCosineSimilarity(int dim, float *ax, float *bx)
+{
+	float		similarity = 0.0;
+	float		norma = 0.0;
+	float		normb = 0.0;
+
+	/* Auto-vectorized */
+	for (int i = 0; i < dim; i++)
+	{
+		similarity += ax[i] * bx[i];
+		norma += ax[i] * ax[i];
+		normb += bx[i] * bx[i];
+	}
+
+	/* Use sqrt(a * b) over sqrt(a) * sqrt(b) */
+	return (double) similarity / sqrt((double) norma * (double) normb);
 }
 
 /*
@@ -663,25 +706,11 @@ cosine_distance(PG_FUNCTION_ARGS)
 {
 	Vector	   *a = PG_GETARG_VECTOR_P(0);
 	Vector	   *b = PG_GETARG_VECTOR_P(1);
-	float	   *ax = a->x;
-	float	   *bx = b->x;
-	float		distance = 0.0;
-	float		norma = 0.0;
-	float		normb = 0.0;
 	double		similarity;
 
 	CheckDims(a, b);
 
-	/* Auto-vectorized */
-	for (int i = 0; i < a->dim; i++)
-	{
-		distance += ax[i] * bx[i];
-		norma += ax[i] * ax[i];
-		normb += bx[i] * bx[i];
-	}
-
-	/* Use sqrt(a * b) over sqrt(a) * sqrt(b) */
-	similarity = (double) distance / sqrt((double) norma * (double) normb);
+	similarity = VectorCosineSimilarity(a->dim, a->x, b->x);
 
 #ifdef _MSC_VER
 	/* /fp:fast may not propagate NaN */
@@ -709,18 +738,11 @@ vector_spherical_distance(PG_FUNCTION_ARGS)
 {
 	Vector	   *a = PG_GETARG_VECTOR_P(0);
 	Vector	   *b = PG_GETARG_VECTOR_P(1);
-	float	   *ax = a->x;
-	float	   *bx = b->x;
-	float		dp = 0.0;
 	double		distance;
 
 	CheckDims(a, b);
 
-	/* Auto-vectorized */
-	for (int i = 0; i < a->dim; i++)
-		dp += ax[i] * bx[i];
-
-	distance = (double) dp;
+	distance = (double) VectorInnerProduct(a->dim, a->x, b->x);
 
 	/* Prevent NaN with acos with loss of precision */
 	if (distance > 1)
@@ -729,6 +751,18 @@ vector_spherical_distance(PG_FUNCTION_ARGS)
 		distance = -1;
 
 	PG_RETURN_FLOAT8(acos(distance) / M_PI);
+}
+
+static float
+VectorL1Distance(int dim, float *ax, float *bx)
+{
+	float		distance = 0.0;
+
+	/* Auto-vectorized */
+	for (int i = 0; i < dim; i++)
+		distance += fabsf(ax[i] - bx[i]);
+
+	return distance;
 }
 
 /*
@@ -740,17 +774,10 @@ l1_distance(PG_FUNCTION_ARGS)
 {
 	Vector	   *a = PG_GETARG_VECTOR_P(0);
 	Vector	   *b = PG_GETARG_VECTOR_P(1);
-	float	   *ax = a->x;
-	float	   *bx = b->x;
-	float		distance = 0.0;
 
 	CheckDims(a, b);
 
-	/* Auto-vectorized */
-	for (int i = 0; i < a->dim; i++)
-		distance += fabsf(ax[i] - bx[i]);
-
-	PG_RETURN_FLOAT8((double) distance);
+	PG_RETURN_FLOAT8((double) VectorL1Distance(a->dim, a->x, b->x));
 }
 
 /*
@@ -781,6 +808,45 @@ vector_norm(PG_FUNCTION_ARGS)
 		norm += (double) ax[i] * (double) ax[i];
 
 	PG_RETURN_FLOAT8(sqrt(norm));
+}
+
+/*
+ * Normalize a vector with the L2 norm
+ */
+PGDLLEXPORT PG_FUNCTION_INFO_V1(l2_normalize);
+Datum
+l2_normalize(PG_FUNCTION_ARGS)
+{
+	Vector	   *a = PG_GETARG_VECTOR_P(0);
+	float	   *ax = a->x;
+	double		norm = 0;
+	Vector	   *result;
+	float	   *rx;
+
+	result = InitVector(a->dim);
+	rx = result->x;
+
+	/* Auto-vectorized */
+	for (int i = 0; i < a->dim; i++)
+		norm += (double) ax[i] * (double) ax[i];
+
+	norm = sqrt(norm);
+
+	/* Return zero vector for zero norm */
+	if (norm > 0)
+	{
+		for (int i = 0; i < a->dim; i++)
+			rx[i] = ax[i] / norm;
+
+		/* Check for overflow */
+		for (int i = 0; i < a->dim; i++)
+		{
+			if (isinf(rx[i]))
+				float_overflow_error();
+		}
+	}
+
+	PG_RETURN_POINTER(result);
 }
 
 /*
@@ -886,6 +952,80 @@ vector_mul(PG_FUNCTION_ARGS)
 }
 
 /*
+ * Concatenate vectors
+ */
+PGDLLEXPORT PG_FUNCTION_INFO_V1(vector_concat);
+Datum
+vector_concat(PG_FUNCTION_ARGS)
+{
+	Vector	   *a = PG_GETARG_VECTOR_P(0);
+	Vector	   *b = PG_GETARG_VECTOR_P(1);
+	Vector	   *result;
+	int			dim = a->dim + b->dim;
+
+	CheckDim(dim);
+	result = InitVector(dim);
+
+	for (int i = 0; i < a->dim; i++)
+		result->x[i] = a->x[i];
+
+	for (int i = 0; i < b->dim; i++)
+		result->x[i + a->dim] = b->x[i];
+
+	PG_RETURN_POINTER(result);
+}
+
+/*
+ * Quantize a vector
+ */
+PGDLLEXPORT PG_FUNCTION_INFO_V1(binary_quantize);
+Datum
+binary_quantize(PG_FUNCTION_ARGS)
+{
+	Vector	   *a = PG_GETARG_VECTOR_P(0);
+	float	   *ax = a->x;
+	VarBit	   *result = InitBitVector(a->dim);
+	unsigned char *rx = VARBITS(result);
+
+	for (int i = 0; i < a->dim; i++)
+		rx[i / 8] |= (ax[i] > 0) << (7 - (i % 8));
+
+	PG_RETURN_VARBIT_P(result);
+}
+
+/*
+ * Get a subvector
+ */
+PGDLLEXPORT PG_FUNCTION_INFO_V1(subvector);
+Datum
+subvector(PG_FUNCTION_ARGS)
+{
+	Vector	   *a = PG_GETARG_VECTOR_P(0);
+	int32		start = PG_GETARG_INT32(1);
+	int32		count = PG_GETARG_INT32(2);
+	int32		end = start + count;
+	float	   *ax = a->x;
+	Vector	   *result;
+	int			dim;
+
+	/* Indexing starts at 1, like substring */
+	if (start < 1)
+		start = 1;
+
+	if (end > a->dim)
+		end = a->dim + 1;
+
+	dim = end - start;
+	CheckDim(dim);
+	result = InitVector(dim);
+
+	for (int i = 0; i < dim; i++)
+		result->x[i] = ax[start - 1 + i];
+
+	PG_RETURN_POINTER(result);
+}
+
+/*
  * Internal helper to compare vectors
  */
 int
@@ -934,9 +1074,6 @@ vector_lt(PG_FUNCTION_ARGS)
 	Vector	   *a = PG_GETARG_VECTOR_P(0);
 	Vector	   *b = PG_GETARG_VECTOR_P(1);
 
-	/* TODO Remove in 0.7.0 */
-	CheckDims(a, b);
-
 	PG_RETURN_BOOL(vector_cmp_internal(a, b) < 0);
 }
 
@@ -949,9 +1086,6 @@ vector_le(PG_FUNCTION_ARGS)
 {
 	Vector	   *a = PG_GETARG_VECTOR_P(0);
 	Vector	   *b = PG_GETARG_VECTOR_P(1);
-
-	/* TODO Remove in 0.7.0 */
-	CheckDims(a, b);
 
 	PG_RETURN_BOOL(vector_cmp_internal(a, b) <= 0);
 }
@@ -966,9 +1100,6 @@ vector_eq(PG_FUNCTION_ARGS)
 	Vector	   *a = PG_GETARG_VECTOR_P(0);
 	Vector	   *b = PG_GETARG_VECTOR_P(1);
 
-	/* TODO Remove in 0.7.0 */
-	CheckDims(a, b);
-
 	PG_RETURN_BOOL(vector_cmp_internal(a, b) == 0);
 }
 
@@ -981,9 +1112,6 @@ vector_ne(PG_FUNCTION_ARGS)
 {
 	Vector	   *a = PG_GETARG_VECTOR_P(0);
 	Vector	   *b = PG_GETARG_VECTOR_P(1);
-
-	/* TODO Remove in 0.7.0 */
-	CheckDims(a, b);
 
 	PG_RETURN_BOOL(vector_cmp_internal(a, b) != 0);
 }
@@ -998,9 +1126,6 @@ vector_ge(PG_FUNCTION_ARGS)
 	Vector	   *a = PG_GETARG_VECTOR_P(0);
 	Vector	   *b = PG_GETARG_VECTOR_P(1);
 
-	/* TODO Remove in 0.7.0 */
-	CheckDims(a, b);
-
 	PG_RETURN_BOOL(vector_cmp_internal(a, b) >= 0);
 }
 
@@ -1013,9 +1138,6 @@ vector_gt(PG_FUNCTION_ARGS)
 {
 	Vector	   *a = PG_GETARG_VECTOR_P(0);
 	Vector	   *b = PG_GETARG_VECTOR_P(1);
-
-	/* TODO Remove in 0.7.0 */
-	CheckDims(a, b);
 
 	PG_RETURN_BOOL(vector_cmp_internal(a, b) > 0);
 }
@@ -1095,7 +1217,7 @@ vector_accum(PG_FUNCTION_ARGS)
 }
 
 /*
- * Combine vectors
+ * Combine vectors or half vectors
  */
 PGDLLEXPORT PG_FUNCTION_INFO_V1(vector_combine);
 Datum
@@ -1194,6 +1316,29 @@ vector_avg(PG_FUNCTION_ARGS)
 		result->x[i] = statevalues[i + 1] / n;
 		CheckElement(result->x[i]);
 	}
+
+	PG_RETURN_POINTER(result);
+}
+
+/*
+ * Convert sparse vector to dense vector
+ */
+PGDLLEXPORT PG_FUNCTION_INFO_V1(sparsevec_to_vector);
+Datum
+sparsevec_to_vector(PG_FUNCTION_ARGS)
+{
+	SparseVector *svec = PG_GETARG_SPARSEVEC_P(0);
+	int32		typmod = PG_GETARG_INT32(1);
+	Vector	   *result;
+	int			dim = svec->dim;
+	float	   *values = SPARSEVEC_VALUES(svec);
+
+	CheckDim(dim);
+	CheckExpectedDim(typmod, dim);
+
+	result = InitVector(dim);
+	for (int i = 0; i < svec->nnz; i++)
+		result->x[svec->indices[i] - 1] = values[i];
 
 	PG_RETURN_POINTER(result);
 }

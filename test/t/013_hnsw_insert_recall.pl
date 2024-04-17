@@ -98,6 +98,7 @@ for my $i (0 .. $#operators)
 		push(@expected, $res);
 	}
 
+	# Test approximate results
 	my $min = $operator eq "<#>" ? 0.80 : 0.99;
 	test_recall($min, $operator);
 

@@ -15,7 +15,7 @@ CPP_OBJS = $(CPP_SOURCES:.cpp=.o)
 SOURCES = $(C_SOURCES) $(CPP_SOURCES)
 OBJS = $(C_OBJS) $(CPP_OBJS)
 
-HEADERS = src/vector.h 
+HEADERS = src/halfvec.h src/sparsevec.h src/vector.h 
 
 TESTS = $(wildcard test/sql/*.sql)
 REGRESS = $(patsubst test/sql/%.sql,%,$(TESTS))
@@ -27,7 +27,7 @@ PG_CFLAGS += -I$(srcdir)/src
 PG_CPPFLAGS = $(shell $(PG_CONFIG) --cppflags)
 PG_CPPFLAGS += -fno-exceptions
 
-# Mac ARM doesn't support -march=native
+# Mac ARM doesn't always support -march=native
 ifeq ($(shell uname -s), Darwin)
 	ifeq ($(shell uname -p), arm)
 		# no difference with -march=armv8.5-a

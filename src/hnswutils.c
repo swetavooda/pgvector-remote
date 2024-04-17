@@ -3,12 +3,19 @@
 #include <math.h>
 
 #include "access/generic_xlog.h"
+#include "catalog/pg_type.h"
+#include "catalog/pg_type_d.h"
+#include "fmgr.h"
+#include "halfutils.h"
+#include "halfvec.h"
 #include "hnsw.h"
 #include "lib/pairingheap.h"
+#include "sparsevec.h"
 #include "storage/bufmgr.h"
 #include "utils/datum.h"
 #include "utils/memdebug.h"
 #include "utils/rel.h"
+#include "utils/syscache.h"
 #include "vector.h"
 
 #if PG_VERSION_NUM >= 130000
@@ -150,34 +157,80 @@ HnswOptionalProcInfo(Relation index, uint16 procnum)
 }
 
 /*
- * Divide by the norm
- *
- * Returns false if value should not be indexed
- *
- * The caller needs to free the pointer stored in value
- * if it's different than the original value
+ * Get type
  */
-bool
-HnswNormValue(FmgrInfo *procinfo, Oid collation, Datum *value, Vector * result)
+HnswType
+HnswGetType(Relation index)
 {
-	double		norm = DatumGetFloat8(FunctionCall1Coll(procinfo, collation, *value));
+	Oid			typid = TupleDescAttr(index->rd_att, 0)->atttypid;
+	HeapTuple	tuple;
+	Form_pg_type type;
+	HnswType	result;
 
-	if (norm > 0)
+	if (typid == BITOID)
+		return HNSW_TYPE_BIT;
+
+	tuple = SearchSysCache1(TYPEOID, ObjectIdGetDatum(typid));
+	if (!HeapTupleIsValid(tuple))
+		elog(ERROR, "cache lookup failed for type %u", typid);
+
+	type = (Form_pg_type) GETSTRUCT(tuple);
+	if (strcmp(NameStr(type->typname), "vector") == 0)
+		result = HNSW_TYPE_VECTOR;
+	else if (strcmp(NameStr(type->typname), "halfvec") == 0)
+		result = HNSW_TYPE_HALFVEC;
+	else if (strcmp(NameStr(type->typname), "sparsevec") == 0)
+		result = HNSW_TYPE_SPARSEVEC;
+	else
 	{
-		Vector	   *v = DatumGetVector(*value);
-
-		if (result == NULL)
-			result = InitVector(v->dim);
-
-		for (int i = 0; i < v->dim; i++)
-			result->x[i] = v->x[i] / norm;
-
-		*value = PointerGetDatum(result);
-
-		return true;
+		ReleaseSysCache(tuple);
+		elog(ERROR, "type not supported for hnsw index");
 	}
 
-	return false;
+	ReleaseSysCache(tuple);
+
+	return result;
+}
+
+/*
+ * Normalize value
+ */
+Datum
+HnswNormValue(Datum value, HnswType type)
+{
+	/* TODO Remove type-specific code */
+	if (type == HNSW_TYPE_VECTOR)
+		return DirectFunctionCall1(l2_normalize, value);
+	else if (type == HNSW_TYPE_HALFVEC)
+		return DirectFunctionCall1(halfvec_l2_normalize, value);
+	else if (type == HNSW_TYPE_SPARSEVEC)
+		return DirectFunctionCall1(sparsevec_l2_normalize, value);
+	else
+		elog(ERROR, "Unsupported type");
+}
+
+/*
+ * Check if non-zero norm
+ */
+bool
+HnswCheckNorm(FmgrInfo *procinfo, Oid collation, Datum value)
+{
+	return DatumGetFloat8(FunctionCall1Coll(procinfo, collation, value)) > 0;
+}
+
+/*
+ * Check if a value can be indexed
+ */
+void
+HnswCheckValue(Datum value, HnswType type)
+{
+	if (type == HNSW_TYPE_SPARSEVEC)
+	{
+		SparseVector *vec = DatumGetSparseVector(value);
+
+		if (vec->nnz > HNSW_MAX_NNZ)
+			elog(ERROR, "sparsevec cannot have more than %d non-zero elements for hnsw index", HNSW_MAX_NNZ);
+	}
 }
 
 /*
@@ -575,7 +628,12 @@ HnswLoadElement(HnswElement element, float *distance, Datum *q, Relation index, 
 
 	/* Calculate distance */
 	if (distance != NULL)
-		*distance = (float) DatumGetFloat8(FunctionCall2Coll(procinfo, collation, *q, PointerGetDatum(&etup->data)));
+	{
+		if (DatumGetPointer(*q) == NULL)
+			*distance = 0;
+		else
+			*distance = (float) DatumGetFloat8(FunctionCall2Coll(procinfo, collation, *q, PointerGetDatum(&etup->data)));
+	}
 
 	UnlockReleaseBuffer(buf);
 }
@@ -860,12 +918,15 @@ HnswSearchLayer(char *base, Datum q, List *ep, int ef, int lc, Relation index, F
 static int
 #if PG_VERSION_NUM >= 130000
 CompareCandidateDistances(const ListCell *a, const ListCell *b)
+{
+	HnswCandidate *hca = lfirst(a);
+	HnswCandidate *hcb = lfirst(b);
 #else
 CompareCandidateDistances(const void *a, const void *b)
-#endif
 {
-	HnswCandidate *hca = lfirst((ListCell *) a);
-	HnswCandidate *hcb = lfirst((ListCell *) b);
+	HnswCandidate *hca = lfirst(*(ListCell **) a);
+	HnswCandidate *hcb = lfirst(*(ListCell **) b);
+#endif
 
 	if (hca->distance < hcb->distance)
 		return 1;
@@ -888,12 +949,15 @@ CompareCandidateDistances(const void *a, const void *b)
 static int
 #if PG_VERSION_NUM >= 130000
 CompareCandidateDistancesOffset(const ListCell *a, const ListCell *b)
+{
+	HnswCandidate *hca = lfirst(a);
+	HnswCandidate *hcb = lfirst(b);
 #else
 CompareCandidateDistancesOffset(const void *a, const void *b)
-#endif
 {
-	HnswCandidate *hca = lfirst((ListCell *) a);
-	HnswCandidate *hcb = lfirst((ListCell *) b);
+	HnswCandidate *hca = lfirst(*(ListCell **) a);
+	HnswCandidate *hcb = lfirst(*(ListCell **) b);
+#endif
 
 	if (hca->distance < hcb->distance)
 		return 1;
@@ -952,7 +1016,9 @@ SelectNeighbors(char *base, List *c, int lm, int lc, FmgrInfo *procinfo, Oid col
 {
 	List	   *r = NIL;
 	List	   *w = list_copy(c);
-	pairingheap *wd;
+	HnswCandidate **wd;
+	int			wdlen = 0;
+	int			wdoff = 0;
 	HnswNeighborArray *neighbors = HnswGetNeighbors(base, e2, lc);
 	bool		mustCalculate = !neighbors->closerSet;
 	List	   *added = NIL;
@@ -961,7 +1027,7 @@ SelectNeighbors(char *base, List *c, int lm, int lc, FmgrInfo *procinfo, Oid col
 	if (list_length(w) <= lm)
 		return w;
 
-	wd = pairingheap_allocate(CompareNearestCandidates, NULL);
+	wd = palloc(sizeof(HnswCandidate *) * list_length(w));
 
 	/* Ensure order of candidates is deterministic for closer caching */
 	if (sortCandidates)
@@ -1027,21 +1093,21 @@ SelectNeighbors(char *base, List *c, int lm, int lc, FmgrInfo *procinfo, Oid col
 		if (e->closer)
 			r = lappend(r, e);
 		else
-			pairingheap_add(wd, &(CreatePairingHeapNode(e)->ph_node));
+			wd[wdlen++] = e;
 	}
 
 	/* Cached value can only be used in future if sorted deterministically */
 	neighbors->closerSet = sortCandidates;
 
 	/* Keep pruned connections */
-	while (!pairingheap_is_empty(wd) && list_length(r) < lm)
-		r = lappend(r, ((HnswPairingHeapNode *) pairingheap_remove_first(wd))->inner);
+	while (wdoff < wdlen && list_length(r) < lm)
+		r = lappend(r, wd[wdoff++]);
 
 	/* Return pruned for update connections */
 	if (pruned != NULL)
 	{
-		if (!pairingheap_is_empty(wd))
-			*pruned = ((HnswPairingHeapNode *) pairingheap_first(wd))->inner;
+		if (wdoff < wdlen)
+			*pruned = wd[wdoff];
 		else
 			*pruned = linitial(w);
 	}

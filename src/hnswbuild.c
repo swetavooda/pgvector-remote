@@ -44,6 +44,7 @@
 #include "access/xact.h"
 #include "access/xloginsert.h"
 #include "catalog/index.h"
+#include "catalog/pg_type_d.h"
 #include "commands/progress.h"
 #include "hnsw.h"
 #include "miscadmin.h"
@@ -431,9 +432,14 @@ InsertTupleInMemory(HnswBuildState * buildstate, HnswElement element)
 	HnswGraph  *graph = buildstate->graph;
 	HnswElement entryPoint;
 	LWLock	   *entryLock = &graph->entryLock;
+	LWLock	   *entryWaitLock = &graph->entryWaitLock;
 	int			efConstruction = buildstate->efConstruction;
 	int			m = buildstate->m;
 	char	   *base = buildstate->hnswarea;
+
+	/* Wait if another process needs exclusive lock on entry lock */
+	LWLockAcquire(entryWaitLock, LW_EXCLUSIVE);
+	LWLockRelease(entryWaitLock);
 
 	/* Get entry point */
 	LWLockAcquire(entryLock, LW_SHARED);
@@ -445,8 +451,10 @@ InsertTupleInMemory(HnswBuildState * buildstate, HnswElement element)
 		/* Release shared lock */
 		LWLockRelease(entryLock);
 
-		/* Get exclusive lock */
+		/* Tell other processes to wait and get exclusive lock */
+		LWLockAcquire(entryWaitLock, LW_EXCLUSIVE);
 		LWLockAcquire(entryLock, LW_EXCLUSIVE);
+		LWLockRelease(entryWaitLock);
 
 		/* Get latest entry point after lock is acquired */
 		entryPoint = HnswPtrAccess(base, graph->entryPoint);
@@ -479,11 +487,16 @@ InsertTuple(Relation index, Datum *values, bool *isnull, ItemPointer heaptid, Hn
 	/* Detoast once for all calls */
 	Datum		value = PointerGetDatum(PG_DETOAST_DATUM(values[0]));
 
+	/* Check value */
+	HnswCheckValue(value, buildstate->type);
+
 	/* Normalize if needed */
 	if (buildstate->normprocinfo != NULL)
 	{
-		if (!HnswNormValue(buildstate->normprocinfo, buildstate->collation, &value, buildstate->normvec))
+		if (!HnswCheckNorm(buildstate->normprocinfo, buildstate->collation, value))
 			return false;
+
+		value = HnswNormValue(value, buildstate->type);
 	}
 
 	/* Get datum size */
@@ -612,6 +625,7 @@ InitGraph(HnswGraph * graph, char *base, long memoryTotal)
 	graph->indtuples = 0;
 	SpinLockInit(&graph->lock);
 	LWLockInitialize(&graph->entryLock, hnsw_lock_tranche_id);
+	LWLockInitialize(&graph->entryWaitLock, hnsw_lock_tranche_id);
 	LWLockInitialize(&graph->allocatorLock, hnsw_lock_tranche_id);
 	LWLockInitialize(&graph->flushLock, hnsw_lock_tranche_id);
 }
@@ -658,26 +672,49 @@ HnswSharedMemoryAlloc(Size size, void *state)
 }
 
 /*
+ * Get max dimensions
+ */
+static int
+GetMaxDimensions(HnswType type)
+{
+	int			maxDimensions = HNSW_MAX_DIM;
+
+	if (type == HNSW_TYPE_HALFVEC)
+		maxDimensions *= 2;
+	else if (type == HNSW_TYPE_BIT)
+		maxDimensions *= 32;
+	else if (type == HNSW_TYPE_SPARSEVEC)
+		maxDimensions = INT_MAX;
+
+	return maxDimensions;
+}
+
+/*
  * Initialize the build state
  */
 static void
 InitBuildState(HnswBuildState * buildstate, Relation heap, Relation index, IndexInfo *indexInfo, ForkNumber forkNum)
 {
+	int			maxDimensions;
+
 	buildstate->heap = heap;
 	buildstate->index = index;
 	buildstate->indexInfo = indexInfo;
 	buildstate->forkNum = forkNum;
+	buildstate->type = HnswGetType(index);
 
 	buildstate->m = HnswGetM(index);
 	buildstate->efConstruction = HnswGetEfConstruction(index);
 	buildstate->dimensions = TupleDescAttr(index->rd_att, 0)->atttypmod;
 
+	maxDimensions = GetMaxDimensions(buildstate->type);
+
 	/* Require column to have dimensions to be indexed */
 	if (buildstate->dimensions < 0)
 		elog(ERROR, "column does not have dimensions");
 
-	if (buildstate->dimensions > HNSW_MAX_DIM)
-		elog(ERROR, "column cannot have more than %d dimensions for hnsw index", HNSW_MAX_DIM);
+	if (buildstate->dimensions > maxDimensions)
+		elog(ERROR, "column cannot have more than %d dimensions for hnsw index", maxDimensions);
 
 	if (buildstate->efConstruction < 2 * buildstate->m)
 		elog(ERROR, "ef_construction must be greater than or equal to 2 * m");
@@ -694,9 +731,6 @@ InitBuildState(HnswBuildState * buildstate, Relation heap, Relation index, Index
 	buildstate->graph = &buildstate->graphData;
 	buildstate->ml = HnswGetMl(buildstate->m);
 	buildstate->maxLevel = HnswGetMaxLevel(buildstate->m);
-
-	/* Reuse for each tuple */
-	buildstate->normvec = InitVector(buildstate->dimensions);
 
 	buildstate->graphCtx = GenerationContextCreate(CurrentMemoryContext,
 												   "Hnsw build graph context",
@@ -721,7 +755,6 @@ InitBuildState(HnswBuildState * buildstate, Relation heap, Relation index, Index
 static void
 FreeBuildState(HnswBuildState * buildstate)
 {
-	pfree(buildstate->normvec);
 	MemoryContextDelete(buildstate->graphCtx);
 	MemoryContextDelete(buildstate->tmpCtx);
 }
@@ -976,6 +1009,14 @@ HnswBeginParallel(HnswBuildState * buildstate, bool isconcurrent, int request)
 	hnswarea = (char *) shm_toc_allocate(pcxt->toc, esthnswarea);
 	/* Report less than allocated so never fails */
 	InitGraph(&hnswshared->graphData, hnswarea, esthnswarea - 1024 * 1024);
+
+	/*
+	 * Avoid base address for relptr for Postgres < 14.5
+	 * https://github.com/postgres/postgres/commit/7201cd18627afc64850537806da7f22150d1a83b
+	 */
+#if PG_VERSION_NUM < 140005
+	hnswshared->graphData.memoryUsed += MAXALIGN(1);
+#endif
 
 	shm_toc_insert(pcxt->toc, PARALLEL_KEY_HNSW_SHARED, hnswshared);
 	shm_toc_insert(pcxt->toc, PARALLEL_KEY_HNSW_AREA, hnswarea);

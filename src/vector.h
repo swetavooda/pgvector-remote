@@ -3,6 +3,8 @@
 
 #include "postgres.h"
 
+#include "fmgr.h"
+
 #define VECTOR_MAX_DIM 16000
 
 #define VECTOR_SIZE(_dim)		(offsetof(Vector, x) + sizeof(float)*(_dim))
@@ -33,5 +35,6 @@ Vector	   *InitVector(int dim);
 void		PrintVector(char *msg, Vector * vector);
 int			vector_cmp_internal(Vector * a, Vector * b);
 bool		vector_eq_zero_internal(Vector * a);
+PGDLLEXPORT Datum l2_normalize(PG_FUNCTION_ARGS);
 
 #endif

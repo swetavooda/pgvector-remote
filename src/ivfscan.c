@@ -3,8 +3,10 @@
 #include <float.h>
 
 #include "access/relscan.h"
+#include "bitvector.h"
 #include "catalog/pg_operator_d.h"
 #include "catalog/pg_type_d.h"
+#include "halfvec.h"
 #include "lib/pairingheap.h"
 #include "ivfflat.h"
 #include "miscadmin.h"
@@ -178,6 +180,44 @@ GetScanItems(IndexScanDesc scan, Datum value)
 }
 
 /*
+ * Get scan value
+ */
+static Datum
+GetScanValue(IndexScanDesc scan)
+{
+	IvfflatScanOpaque so = (IvfflatScanOpaque) scan->opaque;
+	Datum		value;
+
+	if (scan->orderByData->sk_flags & SK_ISNULL)
+	{
+		IvfflatType type = IvfflatGetType(scan->indexRelation);
+
+		if (type == IVFFLAT_TYPE_VECTOR)
+			value = PointerGetDatum(InitVector(so->dimensions));
+		else if (type == IVFFLAT_TYPE_HALFVEC)
+			value = PointerGetDatum(InitHalfVector(so->dimensions));
+		else if (type == IVFFLAT_TYPE_BIT)
+			value = PointerGetDatum(InitBitVector(so->dimensions));
+		else
+			elog(ERROR, "Unsupported type");
+	}
+	else
+	{
+		value = scan->orderByData->sk_argument;
+
+		/* Value should not be compressed or toasted */
+		Assert(!VARATT_IS_COMPRESSED(DatumGetPointer(value)));
+		Assert(!VARATT_IS_EXTENDED(DatumGetPointer(value)));
+
+		/* Fine if normalization fails */
+		if (so->normprocinfo != NULL)
+			IvfflatNormValue(so->normprocinfo, so->collation, &value, IvfflatGetType(scan->indexRelation));
+	}
+
+	return value;
+}
+
+/*
  * Prepare for an index scan
  */
 IndexScanDesc
@@ -281,21 +321,7 @@ ivfflatgettuple(IndexScanDesc scan, ScanDirection dir)
 		if (!IsMVCCSnapshot(scan->xs_snapshot))
 			elog(ERROR, "non-MVCC snapshots are not supported with ivfflat");
 
-		if (scan->orderByData->sk_flags & SK_ISNULL)
-			value = PointerGetDatum(InitVector(so->dimensions));
-		else
-		{
-			value = scan->orderByData->sk_argument;
-
-			/* Value should not be compressed or toasted */
-			Assert(!VARATT_IS_COMPRESSED(DatumGetPointer(value)));
-			Assert(!VARATT_IS_EXTENDED(DatumGetPointer(value)));
-
-			/* Fine if normalization fails */
-			if (so->normprocinfo != NULL)
-				IvfflatNormValue(so->normprocinfo, so->collation, &value, NULL);
-		}
-
+		value = GetScanValue(scan);
 		IvfflatBench("GetScanLists", GetScanLists(scan, value));
 		IvfflatBench("GetScanItems", GetScanItems(scan, value));
 		so->first = false;

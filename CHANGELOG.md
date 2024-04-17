@@ -1,7 +1,26 @@
-## 0.6.1 (unreleased)
+## 0.7.0 (unreleased)
+
+- Added `halfvec` type
+- Added `sparsevec` type
+- Added support for indexing `bit` type
+- Added `binary_quantize` function
+- Added `hamming_distance` function
+- Added `jaccard_distance` function
+- Added `l2_normalize` function
+- Added `subvector` function
+- Added concatenate operator for vectors
+- Added CPU dispatching for distance functions on Linux x86-64
+- Updated comparison operators to support vectors with different dimensions
+
+## 0.6.2 (2024-03-18)
+
+- Reduced lock contention with parallel HNSW index builds
+
+## 0.6.1 (2024-03-04)
 
 - Fixed error with `ANALYZE` and vectors with different dimensions
-- Fixed error with `shared_preload_libraries`
+- Fixed segmentation fault with `shared_preload_libraries`
+- Fixed vector subtraction being marked as commutative
 
 ## 0.6.0 (2024-01-29)
 

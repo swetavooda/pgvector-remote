@@ -17,6 +17,7 @@
 #endif
 
 #define HNSW_MAX_DIM 2000
+#define HNSW_MAX_NNZ 1000
 
 /* Support functions */
 #define HNSW_DISTANCE_PROC 1
@@ -55,6 +56,14 @@
 #define HNSW_UPDATE_ENTRY_GREATER 1
 #define HNSW_UPDATE_ENTRY_ALWAYS 2
 
+typedef enum HnswType
+{
+	HNSW_TYPE_VECTOR,
+	HNSW_TYPE_HALFVEC,
+	HNSW_TYPE_BIT,
+	HNSW_TYPE_SPARSEVEC
+}			HnswType;
+
 /* Build phases */
 /* PROGRESS_CREATEIDX_SUBPHASE_INITIALIZE is 1 */
 #define PROGRESS_HNSW_PHASE_LOAD		2
@@ -80,7 +89,7 @@
 
 #if PG_VERSION_NUM < 130000
 #define list_delete_last(list) list_truncate(list, list_length(list) - 1)
-#define list_sort(list, cmp) list_qsort(list, cmp)
+#define list_sort(list, cmp) ((list) = list_qsort(list, cmp))
 #endif
 
 #define HnswIsElementTuple(tup) ((tup)->type == HNSW_ELEMENT_TUPLE_TYPE)
@@ -129,7 +138,7 @@ HnswPtrDeclare(HnswNeighborArray, HnswNeighborArrayRelptr, HnswNeighborArrayPtr)
 HnswPtrDeclare(HnswNeighborArrayPtr, HnswNeighborsRelptr, HnswNeighborsPtr);
 HnswPtrDeclare(char, DatumRelptr, DatumPtr);
 
-typedef struct HnswElementData
+struct HnswElementData
 {
 	HnswElementPtr next;
 	ItemPointerData heaptids[HNSW_HEAPTIDS];
@@ -144,7 +153,7 @@ typedef struct HnswElementData
 	BlockNumber neighborPage;
 	DatumPtr	value;
 	LWLock		lock;
-}			HnswElementData;
+};
 
 typedef HnswElementData * HnswElement;
 
@@ -155,12 +164,12 @@ typedef struct HnswCandidate
 	bool		closer;
 }			HnswCandidate;
 
-typedef struct HnswNeighborArray
+struct HnswNeighborArray
 {
 	int			length;
 	bool		closerSet;
 	HnswCandidate items[FLEXIBLE_ARRAY_MEMBER];
-}			HnswNeighborArray;
+};
 
 typedef struct HnswPairingHeapNode
 {
@@ -185,6 +194,7 @@ typedef struct HnswGraph
 
 	/* Entry state */
 	LWLock		entryLock;
+	LWLock		entryWaitLock;
 	HnswElementPtr entryPoint;
 
 	/* Allocations state */
@@ -241,6 +251,7 @@ typedef struct HnswBuildState
 	Relation	index;
 	IndexInfo  *indexInfo;
 	ForkNumber	forkNum;
+	HnswType	type;
 
 	/* Settings */
 	int			dimensions;
@@ -261,7 +272,6 @@ typedef struct HnswBuildState
 	HnswGraph  *graph;
 	double		ml;
 	int			maxLevel;
-	Vector	   *normvec;
 
 	/* Memory */
 	MemoryContext graphCtx;
@@ -366,7 +376,10 @@ typedef struct HnswVacuumState
 int			HnswGetM(Relation index);
 int			HnswGetEfConstruction(Relation index);
 FmgrInfo   *HnswOptionalProcInfo(Relation index, uint16 procnum);
-bool		HnswNormValue(FmgrInfo *procinfo, Oid collation, Datum *value, Vector * result);
+HnswType	HnswGetType(Relation index);
+Datum		HnswNormValue(Datum value, HnswType type);
+bool		HnswCheckNorm(FmgrInfo *procinfo, Oid collation, Datum value);
+void		HnswCheckValue(Datum value, HnswType type);
 Buffer		HnswNewBuffer(Relation index, ForkNumber forkNum);
 void		HnswInitPage(Buffer buf, Page page);
 void		HnswInit(void);

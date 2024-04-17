@@ -1,22 +1,31 @@
 #include "postgres.h"
 
 #include "access/generic_xlog.h"
+#include "catalog/pg_type.h"
+#include "fmgr.h"
+#include "halfutils.h"
+#include "halfvec.h"
 #include "ivfflat.h"
 #include "storage/bufmgr.h"
 #include "vector.h"
+#include "utils/syscache.h"
 
 /*
  * Allocate a vector array
  */
 VectorArray
-VectorArrayInit(int maxlen, int dimensions)
+VectorArrayInit(int maxlen, int dimensions, Size itemsize)
 {
 	VectorArray res = palloc(sizeof(VectorArrayData));
+
+	/* Ensure items are aligned to prevent UB */
+	itemsize = MAXALIGN(itemsize);
 
 	res->length = 0;
 	res->maxlen = maxlen;
 	res->dim = dimensions;
-	res->items = palloc_extended(maxlen * VECTOR_SIZE(dimensions), MCXT_ALLOC_ZERO | MCXT_ALLOC_HUGE);
+	res->itemsize = itemsize;
+	res->items = palloc_extended(maxlen * itemsize, MCXT_ALLOC_ZERO | MCXT_ALLOC_HUGE);
 	return res;
 }
 
@@ -28,16 +37,6 @@ VectorArrayFree(VectorArray arr)
 {
 	pfree(arr->items);
 	pfree(arr);
-}
-
-/*
- * Print vector array - useful for debugging
- */
-void
-PrintVectorArray(char *msg, VectorArray arr)
-{
-	for (int i = 0; i < arr->length; i++)
-		PrintVector(msg, VectorArrayGet(arr, i));
 }
 
 /*
@@ -67,6 +66,40 @@ IvfflatOptionalProcInfo(Relation index, uint16 procnum)
 }
 
 /*
+ * Get type
+ */
+IvfflatType
+IvfflatGetType(Relation index)
+{
+	Oid			typid = TupleDescAttr(index->rd_att, 0)->atttypid;
+	HeapTuple	tuple;
+	Form_pg_type type;
+	IvfflatType result;
+
+	if (typid == BITOID)
+		return IVFFLAT_TYPE_BIT;
+
+	tuple = SearchSysCache1(TYPEOID, ObjectIdGetDatum(typid));
+	if (!HeapTupleIsValid(tuple))
+		elog(ERROR, "cache lookup failed for type %u", typid);
+
+	type = (Form_pg_type) GETSTRUCT(tuple);
+	if (strcmp(NameStr(type->typname), "vector") == 0)
+		result = IVFFLAT_TYPE_VECTOR;
+	else if (strcmp(NameStr(type->typname), "halfvec") == 0)
+		result = IVFFLAT_TYPE_HALFVEC;
+	else
+	{
+		ReleaseSysCache(tuple);
+		elog(ERROR, "type not supported for ivfflat index");
+	}
+
+	ReleaseSysCache(tuple);
+
+	return result;
+}
+
+/*
  * Divide by the norm
  *
  * Returns false if value should not be indexed
@@ -75,21 +108,18 @@ IvfflatOptionalProcInfo(Relation index, uint16 procnum)
  * if it's different than the original value
  */
 bool
-IvfflatNormValue(FmgrInfo *procinfo, Oid collation, Datum *value, Vector * result)
+IvfflatNormValue(FmgrInfo *procinfo, Oid collation, Datum *value, IvfflatType type)
 {
 	double		norm = DatumGetFloat8(FunctionCall1Coll(procinfo, collation, *value));
 
 	if (norm > 0)
 	{
-		Vector	   *v = DatumGetVector(*value);
-
-		if (result == NULL)
-			result = InitVector(v->dim);
-
-		for (int i = 0; i < v->dim; i++)
-			result->x[i] = v->x[i] / norm;
-
-		*value = PointerGetDatum(result);
+		if (type == IVFFLAT_TYPE_VECTOR)
+			*value = DirectFunctionCall1(l2_normalize, *value);
+		else if (type == IVFFLAT_TYPE_HALFVEC)
+			*value = DirectFunctionCall1(halfvec_l2_normalize, *value);
+		else
+			elog(ERROR, "Unsupported type");
 
 		return true;
 	}
