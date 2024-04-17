@@ -4,7 +4,6 @@
 #include "access/generic_xlog.h"
 #include "access/relscan.h"
 #include "utils/builtins.h"
-#include "utils/lsyscache.h"
 
 RemoteStaticMetaPageData RemoteSnapshotStaticMeta(Relation index)
 {
@@ -128,34 +127,4 @@ void remote_print_relation(Relation index) {
         RemoteBufferOpaqueData buffer_opaque = RemoteSnapshotBufferOpaque(index, blkno);
         elog(INFO, "\nBuffer Opaque Page %d: %s", blkno, buffer_opaque_to_string(buffer_opaque));
     }
-}
-
-
-/* text_array_get_json */
-cJSON* text_array_get_json(Datum value) {
-    ArrayType *array = DatumGetArrayTypeP(value);
-    int nelems = ArrayGetNItems(ARR_NDIM(array), ARR_DIMS(array));
-    Datum* elems;
-    bool* nulls;
-    int16 elmlen;
-    bool elmbyval;
-    char elmalign;
-    Oid elmtype = ARR_ELEMTYPE(array);
-    cJSON *json_array = cJSON_CreateArray();
-
-    // get array element type info
-    get_typlenbyvalalign(elmtype, &elmlen, &elmbyval, &elmalign);
-
-    // deconstruct array
-    deconstruct_array(array, elmtype, elmlen, elmbyval, elmalign, &elems, &nulls, &nelems);
-
-    // copy array elements to json array
-    for (int j = 0; j < nelems; j++) {
-        if (!nulls[j]) {
-            Datum elem = elems[j];
-            char* cstr = TextDatumGetCString(elem);
-            cJSON_AddItemToArray(json_array, cJSON_CreateString(cstr));
-        }
-    }
-    return json_array;
 }

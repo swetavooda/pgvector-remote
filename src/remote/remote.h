@@ -10,7 +10,6 @@
 #include "access/amapi.h"
 #include "src/vector.h"
 
-#include "src/remote/cJSON.h"
 #include <nodes/execnodes.h>
 #include <nodes/pathnodes.h>
 #include <utils/array.h>
@@ -241,9 +240,6 @@ IndexBulkDeleteResult *remote_bulkdelete(IndexVacuumInfo *info, IndexBulkDeleteR
 IndexBulkDeleteResult *no_vacuumcleanup(IndexVacuumInfo *info, IndexBulkDeleteResult *stats);
 
 // validate
-void remote_spec_validator(const char *spec);
-void remote_host_validator(const char *spec);
-void validate_vector_nonzero(Vector* vector);
 bool no_validate(Oid opclassoid);
 
 // utils
@@ -257,7 +253,6 @@ char* checkpoint_to_string(RemoteCheckpoint checkpoint);
 char* buffer_meta_to_string(RemoteBufferMetaPageData buffer_meta);
 char* buffer_opaque_to_string(RemoteBufferOpaqueData buffer_opaque);
 void remote_print_relation(Relation index);
-cJSON* text_array_get_json(Datum value);
 
 // helpers
 Oid get_index_oid_from_name(char* index_name);

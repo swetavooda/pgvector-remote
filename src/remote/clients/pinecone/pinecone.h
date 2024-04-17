@@ -6,6 +6,7 @@
 #include "src/remote/remote.h"  
 #include "src/vector.h"
 #include "postgres.h" // bool
+#include "utils/lsyscache.h"
 
 #define PINECONE_NAME_MAX_LENGTH 45
 #define PINECONE_HOST_MAX_LENGTH 100
@@ -21,6 +22,7 @@ extern RemoteIndexInterface pinecone_remote_index_interface;
 cJSON* pinecone_build_filter(Relation index, ScanKey keys, int nkeys);
 cJSON* checkpoints_get_pinecone_ids(RemoteCheckpoint* checkpoints, int n_checkpoints);
 ItemPointerData* pinecone_extract_ctids_from_fetch_response(cJSON* fetch_response, int* n_results);
+cJSON* text_array_get_json(Datum value);
 
 // interface
 // create

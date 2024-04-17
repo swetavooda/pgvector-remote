@@ -35,7 +35,6 @@ cJSON* tuple_get_remote_vector(TupleDesc tup_desc, Datum *values, bool *isnull, 
     Vector *vector;
     cJSON *json_values;
     vector = DatumGetVector(values[0]);
-    validate_vector_nonzero(vector);
     json_values = cJSON_CreateFloatArray(vector->x, vector->dim);
     // prepare metadata
     for (int i = 1; i < tup_desc->natts; i++) // skip the first column which is the vector

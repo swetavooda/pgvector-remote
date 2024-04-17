@@ -44,6 +44,35 @@ void pinecone_spec_validator(const char* spec) {
     }
 }
 
+
+/* text_array_get_json */
+cJSON* text_array_get_json(Datum value) {
+    ArrayType *array = DatumGetArrayTypeP(value);
+    int nelems = ArrayGetNItems(ARR_NDIM(array), ARR_DIMS(array));
+    Datum* elems;
+    bool* nulls;
+    int16 elmlen;
+    bool elmbyval;
+    char elmalign;
+    Oid elmtype = ARR_ELEMTYPE(array);
+    cJSON *json_array = cJSON_CreateArray();
+
+    // get array element type info
+    get_typlenbyvalalign(elmtype, &elmlen, &elmbyval, &elmalign);
+
+    // deconstruct array
+    deconstruct_array(array, elmtype, elmlen, elmbyval, elmalign, &elems, &nulls, &nelems);
+
+    // copy array elements to json array
+    for (int j = 0; j < nelems; j++) {
+        if (!nulls[j]) {
+            Datum elem = elems[j];
+            char* cstr = TextDatumGetCString(elem);
+            cJSON_AddItemToArray(json_array, cJSON_CreateString(cstr));
+        }
+    }
+    return json_array;
+}
 // char* CreateRemoteIndexAndWait(Relation index, cJSON* spec_json, VectorMetric metric, char* remote_index_name, int dimensions) {
         // host = remote_index_interface->create_host_from_spec(dimensions, metric, remote_index_name, spec);
 char* pinecone_create_host_from_spec(int dimensions, VectorMetric metric, char* spec, Relation index) {

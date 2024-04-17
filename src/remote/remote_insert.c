@@ -165,7 +165,6 @@ bool AppendBufferTupleInCtx(Relation index, Datum *values, bool *isnull, ItemPoi
     oldCtx = MemoryContextSwitchTo(insertCtx);
 
     vector = DatumGetVector(values[0]);
-    validate_vector_nonzero(vector);
     
     checkpoint_created = AppendBufferTuple(index, values, isnull, heap_tid, heapRel);
     MemoryContextSwitchTo(oldCtx);
@@ -198,9 +197,6 @@ bool remote_insert(Relation index, Datum *values, bool *isnull, ItemPointer heap
 
     return false;
 }
-
-// todo: it will make debugging a lot easier to have a way to pretty print the state of the relation e.g. how many tups per page
-
 
 /*
  * Upload batches of vectors to remote.
@@ -297,7 +293,7 @@ void FlushToRemote(Relation index)
         }
 
         // Move to the next page. Stop if there are no more pages.
-        // todo: isn't this linked list unnecessary? Couldn't I just use nextblkno++ and check if it's valid?
+        // This linked list is probably unnecessary. We could could just use blockno++
         currentblkno = RemotePageGetOpaque(page)->nextblkno;
         if (!BlockNumberIsValid(currentblkno)) break; 
 
