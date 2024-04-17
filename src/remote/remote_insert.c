@@ -46,6 +46,7 @@ bool AppendBufferTuple(Relation index, Datum *values, bool *isnull, ItemPointer 
     RemoteBufferMetaPageData meta_snapshot;
     bool full;
     bool create_checkpoint = false;
+    RemoteOptions *opts = (RemoteOptions *) index->rd_options;
     
     // prepare the index tuple
     // itup = index_form_tuple(RelationGetDescr(index), values, isnull);
@@ -91,7 +92,7 @@ bool AppendBufferTuple(Relation index, Datum *values, bool *isnull, ItemPointer 
     insert_page = GenericXLogRegisterBuffer(state, insert_buf, 0);
     // check if the page is full and if we want to create a new checkpoint
     full = PageGetFreeSpace(insert_page) < itemsz;
-    create_checkpoint = meta_snapshot.n_tuples_since_last_checkpoint + PageGetMaxOffsetNumber(insert_page) >= REMOTE_BATCH_SIZE;
+    create_checkpoint = meta_snapshot.n_tuples_since_last_checkpoint + PageGetMaxOffsetNumber(insert_page) >= opts->batch_size;
 
     // add item to insert page
     if (!full && !create_checkpoint) {
@@ -231,7 +232,7 @@ void FlushToRemote(Relation index)
     bool found = false;
 
     // hold
-    PreparedBulkInsert prepared_tuples = interface->begin_prepare_bulk_insert(index->rd_att);
+    PreparedBulkInsert prepared_tuples = interface->begin_prepare_bulk_insert(index);
     int n_prepared_tuples = 0;
 
     // acquire the remote insertion lock
@@ -306,9 +307,9 @@ void FlushToRemote(Relation index)
             GenericXLogState *state = GenericXLogStart(index); // start a new WAL record
  
             interface->end_prepare_bulk_insert(prepared_tuples);
-            interface->bulk_upsert(static_meta.host, prepared_tuples, remote_vectors_per_request, n_prepared_tuples);
+            interface->bulk_upsert(static_meta.host, prepared_tuples, n_prepared_tuples);
             interface->delete_prepared_bulk_insert(prepared_tuples);
-            prepared_tuples = interface->begin_prepare_bulk_insert(index->rd_att);
+            prepared_tuples = interface->begin_prepare_bulk_insert(index);
             n_prepared_tuples = 0;
 
             // lock the buffer meta page

@@ -66,19 +66,21 @@ IndexBuildResult *remote_build(Relation heap, Relation index, IndexInfo *indexIn
 }
 
 void InsertBaseTable(Relation heap, Relation index, IndexInfo *indexInfo, char* host, IndexBuildResult *result, RemoteIndexInterface* remote_index_interface) {
+    RemoteOptions* opts = (RemoteOptions *) index->rd_options;
     RemoteBuildState buildstate;
     int reltuples;
     // initialize the buildstate
     buildstate.indtuples = 0;
-    buildstate.prepared_tuples = remote_index_interface->begin_prepare_bulk_insert(index->rd_att);
+    buildstate.prepared_tuples = remote_index_interface->begin_prepare_bulk_insert(index);
     buildstate.n_prepared_tuples = 0;
+    buildstate.batch_size = opts->batch_size;
     buildstate.remote_index_interface = remote_index_interface;
     strcpy(buildstate.host, host);
     // iterate through the base table and upsert the vectors to the remote index
     reltuples = table_index_build_scan(heap, index, indexInfo, true, true, remote_build_callback, (void *) &buildstate, NULL);
     if (buildstate.n_prepared_tuples > 0) {
         remote_index_interface->end_prepare_bulk_insert(buildstate.prepared_tuples);
-        remote_index_interface->bulk_upsert(host, buildstate.prepared_tuples, remote_vectors_per_request, buildstate.n_prepared_tuples);
+        remote_index_interface->bulk_upsert(host, buildstate.prepared_tuples, buildstate.n_prepared_tuples);
         remote_index_interface->delete_prepared_bulk_insert(buildstate.prepared_tuples);
     }
     // stats
@@ -94,11 +96,11 @@ void remote_build_callback(Relation index, ItemPointer tid, Datum *values, bool 
     buildstate->remote_index_interface->append_prepare_bulk_insert(buildstate->prepared_tuples, itup_desc, values, isnull, tid);
     buildstate->n_prepared_tuples++;
     // if full, flush
-    if (buildstate->n_prepared_tuples == REMOTE_BATCH_SIZE) {
+    if (buildstate->n_prepared_tuples == buildstate->batch_size) {
         buildstate->remote_index_interface->end_prepare_bulk_insert(buildstate->prepared_tuples);
-        buildstate->remote_index_interface->bulk_upsert(buildstate->host, buildstate->prepared_tuples, remote_vectors_per_request, buildstate->n_prepared_tuples);
+        buildstate->remote_index_interface->bulk_upsert(buildstate->host, buildstate->prepared_tuples, buildstate->n_prepared_tuples);
         buildstate->remote_index_interface->delete_prepared_bulk_insert(buildstate->prepared_tuples);
-        buildstate->prepared_tuples = buildstate->remote_index_interface->begin_prepare_bulk_insert(itup_desc);
+        buildstate->prepared_tuples = buildstate->remote_index_interface->begin_prepare_bulk_insert(index);
         buildstate->n_prepared_tuples = 0;
     }
     buildstate->indtuples++;

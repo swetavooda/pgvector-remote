@@ -7,6 +7,9 @@
 #include <stdlib.h>
 
 // CREATE
+int milvus_est_network_cost(void) {
+    return milvus_network_cost;
+}
 
 // UPSERT
 void milvus_end_prepare_bulk_insert(PreparedBulkInsert prepared_vectors) {
@@ -22,6 +25,7 @@ RemoteIndexInterface milvus_remote_index_interface = {
     .create_host_from_spec = milvus_create_host_from_spec,
     .validate_host_schema = milvus_validate_host_schema,
     .count_live = milvus_count_live,
+    .est_network_cost = milvus_est_network_cost,
     // upsert
     .begin_prepare_bulk_insert = milvus_begin_prepare_bulk_insert,
     .append_prepare_bulk_insert = milvus_append_prepare_bulk_insert,

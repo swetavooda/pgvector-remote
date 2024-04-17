@@ -56,9 +56,14 @@ char* pinecone_create_host_from_spec(int dimensions, VectorMetric metric, char* 
     // return host;
 }
 
+// CREATE AND MISC
 void pinecone_validate_host_schema(char* host, int dimensions, VectorMetric metric, Relation index) {
     // TODO: check that the host's schema matches the table
     return;
+}
+
+int pinecone_est_network_cost(void) {
+    return pinecone_network_cost;
 }
 
 int pinecone_count_live(char* host) {
@@ -82,7 +87,7 @@ PreparedQuery pinecone_prepare_query(Relation index, ScanKey keys, int nkeys, Ve
 cJSON* pinecone_build_filter(Relation index, ScanKey keys, int nkeys) {
     cJSON *filter = cJSON_CreateObject();
     cJSON *and_list = cJSON_CreateArray();
-    const char* remote_filter_operators[] = {"$lt", "$lte", "$eq", "$gte", "$gt", "$ne", "$in"};
+    const char* pinecone_filter_operators[] = {"$lt", "$lte", "$eq", "$gte", "$gt", "$ne", "$in"};
     for (int i = 0; i < nkeys; i++)
     {
         cJSON *key_filter = cJSON_CreateObject();
@@ -135,7 +140,7 @@ cJSON* pinecone_build_filter(Relation index, ScanKey keys, int nkeys) {
                     break;
             }
             // this only works if all datatypes use the same strategy naming convention. todo: document this
-            cJSON_AddItemToObject(condition, remote_filter_operators[keys[i].sk_strategy - 1], condition_value);
+            cJSON_AddItemToObject(condition, pinecone_filter_operators[keys[i].sk_strategy - 1], condition_value);
             cJSON_AddItemToObject(key_filter, td->attname.data, condition);
             cJSON_AddItemToArray(and_list, key_filter);
         }
@@ -209,7 +214,7 @@ ItemPointerData* pinecone_query_with_fetch(char* host, int top_k, PreparedQuery 
 }
 
 // prepare_bulk_insert
-PreparedBulkInsert pinecone_begin_prepare_bulk_insert(TupleDesc tupdesc) {
+PreparedBulkInsert pinecone_begin_prepare_bulk_insert(Relation index) {
     cJSON* json_vectors = cJSON_CreateArray();
     return (PreparedBulkInsert) json_vectors;
 }
@@ -226,10 +231,10 @@ void pinecone_delete_prepared_bulk_insert(PreparedBulkInsert prepared_vectors) {
     cJSON_Delete((cJSON*) prepared_vectors);
 }
 
-bool pinecone_bulk_upsert(char* host, PreparedBulkInsert prepared_vectors, int remote_vectors_per_request, int n_prepared_tuples) {
+bool pinecone_bulk_upsert(char* host, PreparedBulkInsert prepared_vectors,  int n_prepared_tuples) {
     cJSON *json_vectors = (cJSON*) prepared_vectors;
     cJSON *response;
-    response = remote_bulk_upsert(pinecone_api_key, host, json_vectors, remote_vectors_per_request);
+    response = remote_bulk_upsert(pinecone_api_key, host, json_vectors, pinecone_vectors_per_request);
     elog(DEBUG1, "Pinecone bulk upsert response: %s", cJSON_Print(response));
     if (response != NULL && cJSON_GetObjectItemCaseSensitive(response, "upsertedCount") != NULL) {
         return true;
@@ -243,6 +248,7 @@ RemoteIndexInterface pinecone_remote_index_interface = {
     .create_host_from_spec = pinecone_create_host_from_spec,
     .validate_host_schema = pinecone_validate_host_schema,
     .count_live = pinecone_count_live,
+    .est_network_cost = pinecone_est_network_cost,
     // upsert
     .begin_prepare_bulk_insert = pinecone_begin_prepare_bulk_insert,
     .append_prepare_bulk_insert = pinecone_append_prepare_bulk_insert,
