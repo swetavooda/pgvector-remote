@@ -1,12 +1,11 @@
-#include "remote.h"
 
-#include "utils/guc.h"
 
-#include <float.h>  
+#include <float.h>  // DBL_MAX
 
 #include "remote/remote.h"
-#include "utils/rel.h"
 
+#include "utils/guc.h" // DefineCustomIntVariable
+#include "utils/rel.h" // Relation
 #include "utils/selfuncs.h" // cost estimate utilities
 
 #if PG_VERSION_NUM < 150000
@@ -161,6 +160,8 @@ bytea * remote_options(Datum reloptions, bool validate)
     }
 	return (bytea *) opts;
 }
+
+bool no_validate(Oid opclassoid) { return true; }
 
 /*
  * Define index handler

@@ -2,8 +2,9 @@
 #define REMOTE_API_H
 
 #include <curl/curl.h>
-#include "src/remote/cJSON.h"
+
 #include "src/remote/curl_utils.h"
+#include "src/remote/cJSON.h"
 
 #define bool _Bool
 

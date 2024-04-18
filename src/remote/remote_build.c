@@ -1,4 +1,3 @@
-#include "remote.h"
 
 #include "remote/remote.h"
 
@@ -8,8 +7,7 @@
 
 #include <unistd.h>
 #include <access/tableam.h>
-// LockRelationForExtension in lmgr.h
-#include <storage/lmgr.h>
+#include <storage/lmgr.h> // LockRelationForExtension 
 
 IndexBuildResult *remote_build(Relation heap, Relation index, IndexInfo *indexInfo)
 {

@@ -266,21 +266,3 @@ remote_print_index_stats(PG_FUNCTION_ARGS) {
     elog(DEBUG1, "Index closed");
     PG_RETURN_VOID();
 }
-
-
-// create the mock table
-PGDLLEXPORT PG_FUNCTION_INFO_V1(remote_create_mock_table);
-Datum
-remote_create_mock_table(PG_FUNCTION_ARGS) {
-    char query[256];
-    int ret;
-    sprintf(query, "CREATE TABLE remote_mock (id SERIAL PRIMARY KEY, url_prefix TEXT, method TEXT, body TEXT, response TEXT, curl_code INT NOT NULL DEFAULT 0);");
-    SPI_connect();
-    ret = SPI_execute(query, false, 0);
-    if (ret != SPI_OK_UTILITY) {
-        elog(ERROR, "Failed to create table");
-    }
-    SPI_finish();
-    elog(NOTICE, "Mock table created");
-    PG_RETURN_VOID();
-}

@@ -2,11 +2,11 @@
 #ifndef PINECONE_CLIENT_H
 #define PINECONE_CLIENT_H
 
+#include "postgres.h" // bool
+
 #include "src/remote/cJSON.h"
 #include "src/remote/remote.h"  
 #include "src/vector.h"
-#include "postgres.h" // bool
-#include "utils/lsyscache.h"
 
 #define PINECONE_NAME_MAX_LENGTH 45
 #define PINECONE_HOST_MAX_LENGTH 100

@@ -1,8 +1,5 @@
 
-#include <stdio.h>
 #include <stdlib.h>
-
-// cpp vector
 #include <vector>
 
 #include "milvus/MilvusClient.h"
@@ -12,12 +9,8 @@ extern "C" {
     #include "postgres.h"
     #include "fmgr.h"
     #include "milvus.h"
-    // index
-    #include "utils/rel.h"
-    // elmbyval
-    #include "utils/lsyscache.h"
-    // array out
-    #include "utils/array.h"
+    #include "utils/rel.h" // index
+    #include "utils/lsyscache.h" // elmbyval
 }
 
 
@@ -32,7 +25,6 @@ typedef struct MilvusPreparedBulkInsert {
 void
 CheckStatus(std::string&& prefix, const milvus::Status& status) {
     if (!status.IsOk()) {
-        // std::cout << prefix << " " << status.Message() << std::endl;
         elog(ERROR, "%s %s", prefix.c_str(), status.Message().c_str());
     }
 }

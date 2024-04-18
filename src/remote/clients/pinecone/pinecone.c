@@ -27,6 +27,8 @@
 #include "src/vector.h"
 #include "postgres.h" // bool
 
+#include "utils/lsyscache.h" // deconstruct array
+
 const char* vector_metric_to_pinecone_metric[VECTOR_METRIC_COUNT] = {
     "",
     "euclidean",

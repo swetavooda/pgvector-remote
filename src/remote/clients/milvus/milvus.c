@@ -2,10 +2,6 @@
 
 #include "postgres.h"
 
-
-#include <stdio.h>
-#include <stdlib.h>
-
 // CREATE
 int milvus_est_network_cost(void) {
     return milvus_network_cost;

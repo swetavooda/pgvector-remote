@@ -1,17 +1,17 @@
+#include <math.h>
+#include <time.h>
+
 #include "remote.h"
 
 #include <storage/bufmgr.h>
 #include "catalog/pg_operator_d.h"
 #include "utils/rel.h"
 #include "utils/builtins.h"
-#include <time.h>
 #include "common/hashfn.h"
-
 #include <catalog/index.h>
 #include <access/heapam.h>
 #include <access/tableam.h>
 
-#include <math.h>
 
 RemoteCheckpoint* get_checkpoints_to_fetch(Relation index, int* n_checkpoints_return) {
     // starting at the current remote page, create a list of each checkpoint page's checkpoint (blkno, tid, checkpt_no)
