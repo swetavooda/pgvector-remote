@@ -84,17 +84,7 @@ cJSON* generic_remote_request(const char *api_key, const char *url, const char *
     }
 
     // perform the request
-    #ifdef REMOTE_MOCK
-    if (remote_use_mock_response) {
-        lookup_mock_response(hnd_t, &response_data, &ret); // TODO: lookup
-        elog(DEBUG1, "Mock response: %s", response_data.data);
-        elog(DEBUG1, "Mock response ret: %d", ret);
-    } else {
-    #endif
     ret = curl_easy_perform(hnd_t);
-    #ifdef REMOTE_MOCK
-    }
-    #endif
 
     // cleanup
     curl_easy_reset(hnd_t);
@@ -219,18 +209,6 @@ cJSON** remote_query_with_fetch(const char *api_key, const char *index_host, cJS
 
 
     // perform the request
-    #ifdef REMOTE_MOCK
-    if (remote_use_mock_response) {
-        CURLcode query_ret, fetch_ret;
-        lookup_mock_response(query_handle, &query_response_data, &query_ret);
-        elog(DEBUG1, "Mock query response: %s", query_response_data.data);
-        if (with_fetch) {
-            lookup_mock_response(fetch_handle, &fetch_response_data, &fetch_ret);
-            elog(DEBUG1, "Mock fetch response: %s", fetch_response_data.data);
-        }
-    } else {
-    #endif
-
     // start time
     start = clock();
     // run the handles
@@ -255,11 +233,6 @@ cJSON** remote_query_with_fetch(const char *api_key, const char *index_host, cJS
     // stop time
     stop = clock();
     elog(DEBUG2, "Query and fetch took %f seconds", (double)(stop - start) / CLOCKS_PER_SEC);
-
-    #ifdef REMOTE_MOCK
-    }
-    #endif
-
 
     // parse the responses
     start = clock();
@@ -298,16 +271,6 @@ cJSON* remote_bulk_upsert(const char *api_key, const char *index_host, cJSON *ve
     }
     cJSON_Delete(batches);
 
-    #ifdef REMOTE_MOCK
-    if (remote_use_mock_response) {
-        for (int i = 0; i < n_batches; i++) {
-            CURLcode ret;
-            lookup_mock_response(handles[i], &response_data[i], &ret);
-            elog(DEBUG1, "Mock response: %s", response_data[i].data);
-        }
-    } else {
-    #endif
-    
     // run the handles
     curl_multi_perform(multi_handle, &running);
     while (running) {
@@ -323,9 +286,6 @@ cJSON* remote_bulk_upsert(const char *api_key, const char *index_host, cJSON *ve
     for (int i = 0; i < n_batches; i++) {
         curl_easy_reset(handles[i]);
     }
-    #ifdef REMOTE_MOCK
-    }
-    #endif
 
     // todo: check the responses from upsert
     // todo: free the response.data

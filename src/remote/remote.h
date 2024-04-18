@@ -2,20 +2,12 @@
 #define REMOTE_INDEX_AM_H
 
 #include "postgres.h"
-// curl
-#include <curl/curl.h>
-#include "src/remote/curl_utils.h"
-
-// todo: get these out of the header
-#include "access/amapi.h"
-#include "src/vector.h"
-
 #include <nodes/execnodes.h>
 #include <nodes/pathnodes.h>
 #include <utils/array.h>
-#include "access/relscan.h"
-#include "storage/block.h"
-#include <access/reloptions.h>
+#include <access/reloptions.h>  // for relopt_enum_elt_def
+
+#include "src/vector.h"
 
 #define REMOTE_DEFAULT_BUFFER_THRESHOLD 2000
 #define REMOTE_MIN_BUFFER_THRESHOLD 1
@@ -255,7 +247,6 @@ void remote_print_relation(Relation index);
 
 // helpers
 Oid get_index_oid_from_name(char* index_name);
-void lookup_mock_response(CURL* hnd, ResponseData* response_data, CURLcode* curl_code);
 
 
 // misc.
