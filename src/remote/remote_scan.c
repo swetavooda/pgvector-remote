@@ -1,4 +1,5 @@
 #include <math.h>
+#include <float.h>
 #include <time.h>
 
 #include "remote.h"
@@ -50,28 +51,22 @@ IndexScanDesc remote_beginscan(Relation index, int nkeys, int norderbys)
 {
 	IndexScanDesc scan;
     RemoteScanOpaque so;
-    AttrNumber attNums[] = {1, 2};
-	Oid			sortOperators[] = {Float8LessOperator, TIDLessOperator};
-	Oid			sortCollations[] = {InvalidOid, InvalidOid};
-	bool		nullsFirstFlags[] = {false, false};
+    AttrNumber attNums[] = {1};
+	Oid			sortOperators[] = {TIDLessOperator};
+	Oid			sortCollations[] = {InvalidOid};
+	bool		nullsFirstFlags[] = {false};
 	scan = RelationGetIndexScan(index, nkeys, norderbys);
     so = (RemoteScanOpaque) palloc(sizeof(RemoteScanOpaqueData));
 
-    // set support functions
-    so->procinfo = index_getprocinfo(index, 1, 1); // lookup the first support function in the opclass for the first attribute
-
     // create tuple description for sorting
     so->sort_tupdesc = CreateTemplateTupleDesc(2);
-    TupleDescInitEntry(so->sort_tupdesc, (AttrNumber) 1, "distance", FLOAT8OID, -1, 0);
-    TupleDescInitEntry(so->sort_tupdesc, (AttrNumber) 2, "heaptid", TIDOID, -1, 0);
+    TupleDescInitEntry(so->sort_tupdesc, (AttrNumber) 1, "heaptid", TIDOID, -1, 0);
+    TupleDescInitEntry(so->sort_tupdesc, (AttrNumber) 2, "is_local", BOOLOID, -1, 0);
 
     // allocate 600KB for the heapsort max 20K tuples each of 20 bytes is 400KB (each tuple has two datums = 8B + header)
-    so->local_sortstate = tuplesort_begin_heap(so->sort_tupdesc, 2, attNums, sortOperators, sortCollations, nullsFirstFlags, 600, NULL, false);
-    so->remote_sortstate = tuplesort_begin_heap(so->sort_tupdesc, 2, attNums, sortOperators, sortCollations, nullsFirstFlags, 600, NULL, false);
+    so->tid_sortstate = tuplesort_begin_heap(so->sort_tupdesc, 1, attNums, sortOperators, sortCollations, nullsFirstFlags, 600, NULL, false);
     // these slots hold the top result from the sortstate
-    so->local_sortslot = MakeSingleTupleTableSlot(so->sort_tupdesc, &TTSOpsMinimalTuple);
-    so->remote_sortslot = MakeSingleTupleTableSlot(so->sort_tupdesc, &TTSOpsMinimalTuple);
-    
+    so->tid_sortslot = MakeSingleTupleTableSlot(so->sort_tupdesc, &TTSOpsMinimalTuple);
     scan->opaque = so;
     return scan;
 }
@@ -124,12 +119,12 @@ void remote_rescan(IndexScanDesc scan, ScanKey keys, int nkeys, ScanKey orderbys
     so->local_tids = buffer_get_tids(scan->indexRelation, &n_local_tids);
 
     // sort the tids
-    load_tids_into_sort(index, so->local_sortstate, so, query_datum, so->local_tids, n_local_tids);
-    load_tids_into_sort(index, so->remote_sortstate, so, query_datum, so->remote_tids, n_remote_tids);
+    load_tids_into_sort(index, so->tid_sortstate, so, query_datum, so->local_tids, n_local_tids, true);
+    load_tids_into_sort(index, so->tid_sortstate, so, query_datum, so->remote_tids, n_remote_tids, false);
+    tuplesort_performsort(so->tid_sortstate);
 
     // get the first tuple
-    so->more_local_tuples = tuplesort_gettupleslot(so->local_sortstate, true, false, so->local_sortslot, NULL);
-    so->more_remote_tuples = tuplesort_gettupleslot(so->remote_sortstate, true, false, so->remote_sortslot, NULL);
+    so->more_tuples = tuplesort_gettupleslot(so->tid_sortstate, true, false, so->tid_sortslot, NULL);
 
     // allocate for xs_orderbyvals (*Datum)
     scan->xs_orderbyvals = palloc(sizeof(Datum)); // assumes only one ORDER BY
@@ -139,63 +134,24 @@ void remote_rescan(IndexScanDesc scan, ScanKey keys, int nkeys, ScanKey orderbys
 
 // todo: save stats from inserting from base table into the meta
 
-void load_tids_into_sort(Relation index, Tuplesortstate *sortstate, RemoteScanOpaque so, Datum query_datum, ItemPointerData* tids, int n_tids) {
+void load_tids_into_sort(Relation index, Tuplesortstate *sortstate, RemoteScanOpaque so, Datum query_datum, ItemPointerData* tids, int n_tids, bool is_local) {
     // todo: make sure that this is just as fast as pgvector's flatscan e.g. using vectorized operations
     TupleTableSlot *slot = MakeSingleTupleTableSlot(so->sort_tupdesc, &TTSOpsVirtual);
 
-    // index info
-    IndexInfo *indexInfo = BuildIndexInfo(index);
-    Datum* index_values = palloc(sizeof(Datum) * indexInfo->ii_NumIndexAttrs);
-    bool* index_isnull = palloc(sizeof(bool) * indexInfo->ii_NumIndexAttrs);
-
-    // get the base table
-    Oid baseTableOid = index->rd_index->indrelid;
-    Relation baseTableRel = RelationIdGetRelation(baseTableOid);
-    Snapshot snapshot = GetActiveSnapshot();
-
-    // begin the index fetch (this is the preferred way for an index to request tuples from its base table)
-    IndexFetchTableData *fetchData = baseTableRel->rd_tableam->index_fetch_begin(baseTableRel);
-    TupleTableSlot *base_table_slot = MakeSingleTupleTableSlot(baseTableRel->rd_att, &TTSOpsBufferHeapTuple);
-    bool call_again = false; // N.B. call_again must be initialized to false, despite being a return flag
-    bool all_dead = false;
-    bool found;
     for (int i = 0; i < n_tids; i++) {
         // fetch the vector from the base table
         ItemPointer tid = &tids[i]; // these point to so->local_tids or so->remote_tids
-        call_again = false;
-        found = baseTableRel->rd_tableam->index_fetch_tuple(fetchData, tid, snapshot, base_table_slot, &call_again, &all_dead);
-        // all_dead tells us if the tuple is dead to all backends meanning that our index can safely drop it.
-        // TODO: we can use this to cleanup the remote index on the fly
-        if (!found) {
-            if (!all_dead) {
-                // every tuple we request should either be found or all_dead
-                elog(WARNING, "could not find tuple in base table with tid %d:%d:%d and it is not known to be dead", tid->ip_blkid.bi_hi, tid->ip_blkid.bi_lo, tid->ip_posid);
-            }
-            continue; // do not add the tuple to the sortstate
-        }
-
-        // extract the indexed columns
-        FormIndexDatum(indexInfo, base_table_slot, NULL, index_values, index_isnull);
-        if (index_isnull[0]) elog(ERROR, "vector is null");
         
         // add the tuple
         ExecClearTuple(slot);
-        slot->tts_values[0] = FunctionCall2(so->procinfo, index_values[0], query_datum); // compute distance between entry and query
+        slot->tts_values[0] = ItemPointerGetDatum(tid);
         slot->tts_isnull[0] = false;
-        slot->tts_values[1] = ItemPointerGetDatum(tid);
+        slot->tts_values[1] = BoolGetDatum(is_local);
         slot->tts_isnull[1] = false;
         ExecStoreVirtualTuple(slot);
 
         tuplesort_puttupleslot(sortstate, slot);
     }
-
-    // end the index fetch
-    ExecDropSingleTupleTableSlot(base_table_slot);
-    baseTableRel->rd_tableam->index_fetch_end(fetchData);
-    // close the base table
-    RelationClose(baseTableRel);
-
-    tuplesort_performsort(sortstate);
 }
 
 ItemPointerData* buffer_get_tids(Relation index, int* return_n_tids)
@@ -254,54 +210,38 @@ ItemPointerData* buffer_get_tids(Relation index, int* return_n_tids)
 bool remote_gettuple(IndexScanDesc scan, ScanDirection dir)
 {
     RemoteScanOpaque so = (RemoteScanOpaque) scan->opaque;
-    double remote_best_dist, local_best_dist;
-    ItemPointer local_tid, remote_tid;
+    ItemPointer tid;
+    int is_local;
     bool isnull;
-    bool use_buffer_tuple = false;
+
+    if (!so->more_tuples) {
+        return false;
+    }
 
     // merge the results from the buffer and the remote index
-    local_tid = so->more_local_tuples ? (ItemPointer) slot_getattr(so->local_sortslot, 2, &isnull) : NULL;
-    remote_tid = so->more_remote_tuples ? (ItemPointer) slot_getattr(so->remote_sortslot, 2, &isnull) : NULL;
-    if (local_tid != NULL && remote_tid != NULL && ItemPointerEquals(local_tid, remote_tid)) {
-        // skip local tuple if it is the same as remote
-        so->more_local_tuples = tuplesort_gettupleslot(so->local_sortstate, true, false, so->local_sortslot, NULL);
-        local_tid = so->more_local_tuples ? (ItemPointer) slot_getattr(so->local_sortslot, 2, &isnull) : NULL;
-    }
-    local_best_dist = so->more_local_tuples ? DatumGetFloat8(slot_getattr(so->local_sortslot, 1, &isnull)) : 0;
-    remote_best_dist = so->more_remote_tuples ? DatumGetFloat8(slot_getattr(so->remote_sortslot, 1, &isnull)) : 0;
-    
-    // return false if there are no more tuples
-    if (!so->more_local_tuples && !so->more_remote_tuples) { // no more tuples
-        return false;
-    } 
-    
-    // choose the best tuple
-    if (!so->more_remote_tuples) { // no more remote tuples
-        use_buffer_tuple = true;
-    } else if (!so->more_local_tuples) { // no more local tuples
-        use_buffer_tuple = false;
-    } else if (local_best_dist < remote_best_dist) { // local tuple is better
-        use_buffer_tuple = true;
-    } else { // remote tuple is better
-        use_buffer_tuple = false;
+    tid = (ItemPointer) DatumGetPointer(slot_getattr(so->tid_sortslot, 1, &isnull));
+    is_local = DatumGetBool(slot_getattr(so->tid_sortslot, 2, &isnull));
+
+    scan->xs_heaptid = *tid; // ItemPointerData
+    scan->xs_recheck = is_local; // we can only apply predicates on the remote index, so predicates on tuples in the local buffer need to be rechecked
+    so->more_tuples = tuplesort_gettupleslot(so->tid_sortstate, true, false, so->tid_sortslot, NULL);
+    if (so->more_tuples) {
+        ItemPointer new_tid = (ItemPointer) DatumGetPointer(slot_getattr(so->tid_sortslot, 1, &isnull));
+        if (ItemPointerCompare(tid, new_tid) == 0) {
+            // if the next tuple is the same as the current tuple, then we need to skip
+            // N.B. we don't need a loop because the same tid appears at most twice in the sortstate
+            elog(DEBUG1, "Skipping duplicate tuple, found in both local buffer and remote index");
+            so->more_tuples = tuplesort_gettupleslot(so->tid_sortstate, true, false, so->tid_sortslot, NULL);
+        }
     }
 
-    // return the best tuple and set the next tuple to be fetched
-    if (use_buffer_tuple) {
-        // use the local tuple
-        scan->xs_heaptid = *local_tid;
-        scan->xs_recheck = true;
-        so->more_local_tuples = tuplesort_gettupleslot(so->local_sortstate, true, false, so->local_sortslot, NULL);
-    } else {
-        // use the remote tuple
-        scan->xs_heaptid = *remote_tid;
-        scan->xs_recheck = false;
-        so->more_remote_tuples = tuplesort_gettupleslot(so->remote_sortstate, true, false, so->remote_sortslot, NULL);
-    }
     // TODO: we could simplify by setting xs_recheckorderby to make PG reorder all, say, 20K tuples
     // This way we avoid looking up and computing the distance for each tuple twice
-    // Also: then we aren't responsible for reporting costestimates for disk reads
-    scan->xs_recheckorderby = false; // remote returns an approximate distance which we need to recheck.
+    scan->xs_recheckorderby = true; // remote returns an approximate distance which we need to recheck.
+    // so set this lower bound to -inf
+    scan->xs_orderbyvals[0] = Float8GetDatum(-DBL_MAX);
+    scan->xs_orderbynulls[0] = false;
+
     return true;
 }
 
