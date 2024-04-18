@@ -83,7 +83,7 @@ typedef struct RemoteOptions
     int         spec; // spec is a string; this is its offset in the rd_options
     Provider    provider;
     int         host;
-    bool        overwrite; // todo: should this be int?
+    bool        overwrite; 
     bool        skip_build;
     int         batch_size;
 }			RemoteOptions;
@@ -196,7 +196,7 @@ extern bool remote_use_mock_response;
 Datum remotehandler(PG_FUNCTION_ARGS); // handler
 void RemoteInit(void); // GUC and Index Options
 bytea * remote_options(Datum reloptions, bool validate);
-void no_costestimate(PlannerInfo *root, IndexPath *path, double loop_count,
+void remote_costestimate(PlannerInfo *root, IndexPath *path, double loop_count,
 					Cost *indexStartupCost, Cost *indexTotalCost,
 					Selectivity *indexSelectivity, double *indexCorrelation,
 					double *indexPages);
@@ -213,9 +213,8 @@ void no_buildempty(Relation index); // for some reason this is never called even
 VectorMetric get_opclass_metric(Relation index);
 
 // insert
-bool AppendBufferTupleInCtx(Relation index, Datum *values, bool *isnull, ItemPointer heap_tid, Relation heapRel, IndexUniqueCheck checkUnique, IndexInfo *indexInfo);
 void RemotePageInit(Page page, Size pageSize);
-bool AppendBufferTuple(Relation index, Datum *values, bool *isnull, ItemPointer heap_tid, Relation heapRel);
+bool AppendBufferTuple(Relation index, ItemPointer tid);
 bool remote_insert(Relation index, Datum *values, bool *isnull, ItemPointer heap_tid,
                      Relation heap, IndexUniqueCheck checkUnique, 
 #if PG_VERSION_NUM >= 140000

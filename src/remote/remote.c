@@ -21,7 +21,6 @@ int remote_max_fetched_vectors_for_liveness_check = 10;  // todo: dynamic meta w
 bool remote_use_mock_response = false;
 #endif
 
-// todo: principled batch sizes. Do we ever want the buffer to be bigger than a multi-insert? Possibly if we want to let the buffer fill up when the remote index is down.
 static relopt_kind remote_relopt_kind;
 
 
@@ -56,8 +55,6 @@ void RemoteInit(void)
     add_int_reloption(remote_relopt_kind, "batch_size",
                             "Number of vectors in each buffer batch. (N.B. pinecone will split this into smaller concurrent requests based on remote.pinecone_vectors_per_request)",
                             1000, 1, 10000, AccessExclusiveLock);
-    // todo: allow for specifying a hostname instead of asking to create it
-    // todo: you can have a relopts_validator which validates the whole relopt set. This could be used to check that exactly one of spec or host is set
     DefineCustomIntVariable("remote.top_k", "Remote top k", "Remote top k",
                             &remote_top_k,
                             500, 1, 10000,
@@ -88,7 +85,7 @@ void RemoteInit(void)
     MarkGUCPrefixReserved("remote");
 }
 
-void no_costestimate(PlannerInfo *root, IndexPath *path, double loop_count,
+void remote_costestimate(PlannerInfo *root, IndexPath *path, double loop_count,
 					Cost *indexStartupCost, Cost *indexTotalCost,
 					Selectivity *indexSelectivity, double *indexCorrelation,
 					double *indexPages)
@@ -150,7 +147,7 @@ bytea * remote_options(Datum reloptions, bool validate)
     if (first_time) {
         first_time = false;
         return (bytea *) opts;
-        // todo: this is ugly but otherwise pg tries to validate the default values
+        // this is ugly but otherwise pg tries to validate the default values
     }
 
     // check that exactly one of spec or host is set
@@ -184,7 +181,7 @@ Datum remotehandler(PG_FUNCTION_ARGS)
     amroutine->amcanorderbyop = true;
     amroutine->amcanbackward = false; /* can change direction mid-scan */
     amroutine->amcanunique = false;
-    amroutine->amcanmulticol = true; /* TODO: remote can support filtered search */
+    amroutine->amcanmulticol = true;
     amroutine->amoptionalkey = true;
     amroutine->amsearcharray = false;
     amroutine->amsearchnulls = false;
@@ -192,7 +189,7 @@ Datum remotehandler(PG_FUNCTION_ARGS)
     amroutine->amclusterable = false;
     amroutine->ampredlocks = false;
     amroutine->amcanparallel = false;
-    amroutine->amcaninclude = false;
+    amroutine->amcaninclude = false; // we only store ids, we don't have a covering index
 #if PG_VERSION_NUM >= 130000
     amroutine->amusemaintenanceworkmem = false; /* not used during VACUUM */
     amroutine->amparallelvacuumoptions = 0;
@@ -208,7 +205,7 @@ Datum remotehandler(PG_FUNCTION_ARGS)
     // used to indicate if we support index-only scans; takes a attno and returns a bool;
     // included cols should always return true since there is little point in an included column if it can't be returned
     amroutine->amcanreturn = NULL; // do we support index-only scans?
-    amroutine->amcostestimate = no_costestimate;
+    amroutine->amcostestimate = remote_costestimate;
     amroutine->amoptions = remote_options;
     amroutine->amproperty = NULL;            /* TODO AMPROP_DISTANCE_ORDERABLE */
     amroutine->ambuildphasename = NULL;      // maps build phase number to name

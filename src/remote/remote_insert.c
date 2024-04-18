@@ -32,7 +32,7 @@ void RemotePageInit(Page page, Size pageSize)
  * add a tuple to the end of the buffer
  * return true if a new page was created
  */
-bool AppendBufferTuple(Relation index, Datum *values, bool *isnull, ItemPointer heap_tid, Relation heapRel)
+bool AppendBufferTuple(Relation index, ItemPointer heap_tid)
 {
     // IndexTuple itup;
     GenericXLogState *state;
@@ -152,26 +152,6 @@ bool AppendBufferTuple(Relation index, Datum *values, bool *isnull, ItemPointer 
     return create_checkpoint;
 }
 
-bool AppendBufferTupleInCtx(Relation index, Datum *values, bool *isnull, ItemPointer heap_tid, Relation heapRel, IndexUniqueCheck checkUnique, IndexInfo *indexInfo)
-{
-    MemoryContext oldCtx;
-    MemoryContext insertCtx;
-    bool checkpoint_created;
-    Vector* vector;
-    // use a memory context because index_form_tuple can allocate 
-    insertCtx = AllocSetContextCreate(CurrentMemoryContext,
-                                      "Remote insert tuple temporary context",
-                                      ALLOCSET_DEFAULT_SIZES);
-    oldCtx = MemoryContextSwitchTo(insertCtx);
-
-    vector = DatumGetVector(values[0]);
-    
-    checkpoint_created = AppendBufferTuple(index, values, isnull, heap_tid, heapRel);
-    MemoryContextSwitchTo(oldCtx);
-    MemoryContextDelete(insertCtx); // delete the temporary context
-    return checkpoint_created;
-}
-
 /*
  * Insert a tuple into the index
  */
@@ -184,8 +164,8 @@ bool remote_insert(Relation index, Datum *values, bool *isnull, ItemPointer heap
 {
     bool checkpoint_created;
 
-    // add a tuple to the buffer
-    checkpoint_created = AppendBufferTupleInCtx(index, values, isnull, heap_tid, heap, checkUnique, indexInfo);
+    // add a tuple to the buffer (we don't need to use a memory context like the original implementation because we don't need to allocate an index tuple)
+    checkpoint_created = AppendBufferTuple(index, heap_tid);
 
     // if there are enough tuples in the buffer, advance the remote tail
     if (checkpoint_created) {

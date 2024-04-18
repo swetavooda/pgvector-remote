@@ -109,7 +109,6 @@ void remote_rescan(IndexScanDesc scan, ScanKey keys, int nkeys, ScanKey orderbys
     fetch_checkpoints = get_checkpoints_to_fetch(scan->indexRelation, &n_checkpoints);
     query = remote_index_interface->prepare_query(scan->indexRelation, keys, nkeys, vec, remote_top_k);
     best_checkpoint.is_checkpoint = false;
-    // todo: want to 
     so->remote_tids = remote_index_interface->query_with_fetch(remote_metadata.host, remote_top_k, query, true, fetch_checkpoints, n_checkpoints, &best_checkpoint, &n_remote_tids);
 
     // set the remote_ready_page to the best checkpoint
@@ -221,7 +220,7 @@ ItemPointerData* buffer_get_tids(Relation index, int* return_n_tids)
 
 
         // access the page
-        buf = ReadBuffer(index, currentblkno); // todo bulkread access method
+        buf = ReadBuffer(index, currentblkno); 
         LockBuffer(buf, BUFFER_LOCK_SHARE);
         page = BufferGetPage(buf);
 
@@ -254,8 +253,6 @@ ItemPointerData* buffer_get_tids(Relation index, int* return_n_tids)
  */
 bool remote_gettuple(IndexScanDesc scan, ScanDirection dir)
 {
-    // TODO: scan.kill_prior_tuple tells us if the last tuple we returned is dead.
-    // We can use this to perform cleanup on the fly rather than waiting for vacuum.
     RemoteScanOpaque so = (RemoteScanOpaque) scan->opaque;
     double remote_best_dist, local_best_dist;
     ItemPointer local_tid, remote_tid;

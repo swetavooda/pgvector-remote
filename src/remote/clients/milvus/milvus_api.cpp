@@ -335,7 +335,6 @@ extern "C" bool milvus_bulk_upsert(char* host, PreparedBulkInsert prepared_vecto
     MilvusPreparedBulkInsert* prepared_vectors = (MilvusPreparedBulkInsert*) prepared_vectors_;
     std::string collection_name = host;
     std::string partition_name = "_default"; // Milvus' default partition name
-    // TODO: factor out this client connection logic 
     auto client = get_client();
     // tell server prepare to load collection
     auto status = client->LoadCollection(collection_name);
