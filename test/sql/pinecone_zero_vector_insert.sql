@@ -1,7 +1,6 @@
 -- SETUP
 -- suppress output
 \o /dev/null
-delete from pinecone_mock;
 -- logging level
 SET client_min_messages = 'notice';
 -- flush each vector individually
@@ -73,9 +72,11 @@ CREATE INDEX i2 ON t USING pinecone (val) WITH (spec = '{"serverless":{"cloud":"
 -- insert vectors: throws warning while flushing zero-vector
 INSERT INTO t (id, val) VALUES (1, '[100,1,1]');
 INSERT INTO t (id, val) VALUES (2, '[0,0,0]');
-INSERT INTO t (id, val) VALUES (3, '[10120,76,1]');
+INSERT INTO t (id, val) VALUES (3, NULL);
+INSERT INTO t (id, val) VALUES (4, '[10120,76,1]');
 
--- returns only id = 1 as it is flushed to pinecone )zero vector not flushed to pinecone)
+
+-- returns only id = 1 as it is flushed to pinecone (zero vector not flushed to pinecone)
 SELECT * FROM t ORDER BY val <-> '[3,3,3]';
 
 SELECT * FROM t;
@@ -96,7 +97,7 @@ VALUES ('https://fakehost/query', 'POST', $${
                         "values":       []
                 },
                 {
-                        "id":   "000000000003",
+                        "id":   "000000000004",
                         "score":        2,
                         "values":       []
                 }],

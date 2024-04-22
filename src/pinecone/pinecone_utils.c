@@ -13,7 +13,13 @@ cJSON* tuple_get_pinecone_vector(TupleDesc tup_desc, Datum *values, bool *isnull
     Vector *vector;
     cJSON *json_values;
     bool isNonZero;
-
+    // Check if the first Datum is zero, which indicates a NULL pointer/ NULL vector
+    if(values[0]==0) {
+        ereport(WARNING, (errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+                        errmsg("Invalid vector: NULL vector"),
+                        errhint("Pinecone insists that vectors cannot be NULL.")));
+                        return NULL;
+    }
     vector = DatumGetVector(values[0]);
     isNonZero = validate_vector_nonzero(vector);
     if(!isNonZero) return NULL;
