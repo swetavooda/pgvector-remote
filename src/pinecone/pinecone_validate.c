@@ -22,7 +22,8 @@ bool validate_vector_nonzero(Vector* vector) {
     return true;
 }
 
-
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wnonnull"
 void pinecone_spec_validator(const PineconeOptions *opts)
 {
     if (opts == NULL || cJSON_Parse(GET_STRING_RELOPTION(opts, spec)) == NULL || strcmp(GET_STRING_RELOPTION(opts, spec), "") == 0)
@@ -34,6 +35,7 @@ void pinecone_spec_validator(const PineconeOptions *opts)
                          Refer to https://docs.pinecone.io/reference/create_index")));
     }
 }
+#pragma GCC diagnostic pop
 
 void pinecone_host_validator(const char *host)
 {
