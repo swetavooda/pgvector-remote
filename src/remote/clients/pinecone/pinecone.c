@@ -81,8 +81,12 @@ char* pinecone_create_host_from_spec(int dimensions, VectorMetric metric, char* 
     char* host = palloc(100);
     const char* remote_metric_name = vector_metric_to_pinecone_metric[metric];
     cJSON* spec_json = cJSON_Parse(spec);
+    cJSON* create_response;
+    // pgvr-<Oid>
+    char* pinecone_index_name = palloc(20);
+    sprintf(pinecone_index_name, "pgvr-%u", index->rd_id);
     // TODO: remote index name
-    cJSON* create_response = remote_create_index(pinecone_api_key, "my_index_name", dimensions, remote_metric_name, spec_json);
+    create_response = remote_create_index(pinecone_api_key, pinecone_index_name, dimensions, remote_metric_name, spec_json);
     host = cJSON_GetStringValue(cJSON_GetObjectItemCaseSensitive(create_response, "host"));
     return host;
     // now we wait until the remote index is done initializing
