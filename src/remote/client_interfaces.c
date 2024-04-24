@@ -6,6 +6,7 @@ RemoteIndexInterface* remote_index_interfaces[NUM_PROVIDERS] = {0};
 // pinecone
 #ifdef USE_PINECONE
 #include "src/remote/clients/pinecone/pinecone.h"
+// todo: this isn't desirable because it is a pain to drop the extension if you drop a single provider
 char* pinecone_api_key = NULL; 
 int pinecone_network_cost = 0;
 int pinecone_vectors_per_request = 100; // declared in pinecone.h

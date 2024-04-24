@@ -1,4 +1,4 @@
-#include "remote.h"
+#include "src/remote/remote.h"
 
 
 IndexBulkDeleteResult *remote_bulkdelete(IndexVacuumInfo *info, IndexBulkDeleteResult *stats,

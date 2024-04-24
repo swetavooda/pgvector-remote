@@ -1,6 +1,6 @@
 #include "src/remote/clients/pinecone/pinecone_api.h"
 #include "src/remote/clients/pinecone/pinecone.h" // pinecone_api_key
-#include "remote.h"
+#include "src/remote/remote.h"
 
 #include "postgres.h"
 

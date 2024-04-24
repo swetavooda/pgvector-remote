@@ -1,6 +1,6 @@
-#include "remote/remote.h"
-#include "remote/clients/pinecone/pinecone.h"
-#include "remote/clients/pinecone/pinecone_api.h"
+#include "src/remote/remote.h"
+#include "src/remote/clients/pinecone/pinecone.h"
+#include "src/remote/clients/pinecone/pinecone_api.h"
 #include "postgres.h"
 
 #include "access/tupdesc.h"

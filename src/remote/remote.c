@@ -2,7 +2,7 @@
 
 #include <float.h>  // DBL_MAX
 
-#include "remote/remote.h"
+#include "src/remote/remote.h"
 
 #include "utils/guc.h" // DefineCustomIntVariable
 #include "utils/rel.h" // Relation

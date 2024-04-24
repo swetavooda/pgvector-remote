@@ -10,7 +10,7 @@
 #include "halfvec.h"
 #include "hnsw.h"
 #include "ivfflat.h"
-#include "remote/remote.h"
+#include "src/remote/remote.h"
 #include "lib/stringinfo.h"
 #include "libpq/pqformat.h"
 #include "port.h"				/* for strtof() */
