@@ -27,9 +27,7 @@ endif
 
 C_OBJS = $(C_SOURCES:.c=.o)
 CPP_OBJS = $(CPP_SOURCES:.cpp=.o)
-
-
- = $(C_SOURCES) $(CPP_SOURCES)
+SOURCES = $(C_SOURCES) $(CPP_SOURCES)
 OBJS = $(C_OBJS) $(CPP_OBJS)
 
 # print all sources and objects
