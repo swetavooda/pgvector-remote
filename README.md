@@ -51,12 +51,19 @@ SELECT * FROM products WHERE price < 40.0 ORDER BY embedding <-> '[...]' LIMIT 1
 
 ## Installation
 
+
+Follow the [installation instructions for pgvector](https://github.com/pgvector/pgvector?tab=readme-ov-file#installation-notes---linux-and-mac)
+You can specify which remote providers to install using MAKEFLAGS. For example,
+```sh
+make USE_PINECONE=1 USE_MILVUS=1
+sudo make install
+```
+
+### Pinecone Installation
 Install libcurl headers. For example,
 ```sh
 sudo apt-get install libcurl4-openssl-dev
 ```
-
-Then follow the [installation instructions for pgvector](https://github.com/pgvector/pgvector?tab=readme-ov-file#installation-notes---linux-and-mac), using the `feature/remote_indexes` of this repository.
 
 ### Milvus Installation
 - build the milvus c++ sdk
