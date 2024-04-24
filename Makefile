@@ -1,16 +1,29 @@
 EXTENSION = vector
 EXTVERSION = remote0.1.0
 
-SHLIB_LINK += -lcurl 
-# TODO: conditionally build clients
-SHLIB_LINK += -lgrpc++ -lgrpc -lgrpc++_reflection -lprotobuf -ldl -lmilvus
-
 MODULE_big = vector
 DATA = $(wildcard sql/*--*.sql)
 
-C_SOURCES = $(wildcard src/*.c) $(wildcard src/remote/*.c) $(wildcard src/remote/clients/pinecone/*.c) $(wildcard src/remote/clients/milvus/*.c)
+C_SOURCES = $(wildcard src/*.c) $(wildcard src/remote/*.c) 
+CPP_SOURCES = 
+
+# providers
+USE_MILVUS ?= 0
+USE_PINECONE ?= 0
+# milvus
+ifeq ($(USE_MILVUS), 1)
+	SHLIB_LINK += -lgrpc++ -lgrpc -lgrpc++_reflection -lprotobuf -ldl
+	SHLIB_LINK += -lmilvus
+	C_SOURCES += $(wildcard src/remote/clients/milvus/*.c)
+	CPP_SOURCES += $(wildcard src/remote/clients/milvus/*.cpp)
+endif
+# pinecone
+ifeq ($(USE_PINECONE), 1)
+	SHLIB_LINK += -lcurl
+	C_SOURCES += $(wildcard src/remote/clients/pinecone/*.c)
+endif
+
 C_OBJS = $(C_SOURCES:.c=.o)
-CPP_SOURCES = $(wildcard src/remote/clients/milvus/*.cpp)
 CPP_OBJS = $(CPP_SOURCES:.cpp=.o)
 SOURCES = $(C_SOURCES) $(CPP_SOURCES)
 OBJS = $(C_OBJS) $(CPP_OBJS)
