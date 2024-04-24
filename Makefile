@@ -28,6 +28,13 @@ CPP_OBJS = $(CPP_SOURCES:.cpp=.o)
 SOURCES = $(C_SOURCES) $(CPP_SOURCES)
 OBJS = $(C_OBJS) $(CPP_OBJS)
 
+# print all sources and objects
+info:
+	@echo "C_SOURCES: $(C_SOURCES)"
+	@echo "CPP_SOURCES: $(CPP_SOURCES)"
+	@echo "C_OBJS: $(C_OBJS)"
+	@echo "CPP_OBJS: $(CPP_OBJS)"
+
 HEADERS = src/halfvec.h src/sparsevec.h src/vector.h 
 
 TESTS = $(wildcard test/sql/*.sql)
