@@ -81,24 +81,25 @@ char* pinecone_create_host_from_spec(int dimensions, VectorMetric metric, char* 
     char* host = palloc(100);
     const char* remote_metric_name = vector_metric_to_pinecone_metric[metric];
     cJSON* spec_json = cJSON_Parse(spec);
-    cJSON* create_response;
+    cJSON *create_response, *index_stats;
     // pgvr-<Oid>
     char* pinecone_index_name = palloc(20);
     sprintf(pinecone_index_name, "pgvr-%u", index->rd_id);
     // TODO: remote index name
     create_response = remote_create_index(pinecone_api_key, pinecone_index_name, dimensions, remote_metric_name, spec_json);
     host = cJSON_GetStringValue(cJSON_GetObjectItemCaseSensitive(create_response, "host"));
-    return host;
     // now we wait until the remote index is done initializing
     // todo: timeout and error handling
-    // while (!cJSON_IsTrue(cJSON_GetObjectItem(cJSON_GetObjectItem(create_response, "status"), "ready")))
-    // {
-        // elog(DEBUG1, "Waiting for remote index to initialize...");
-        // sleep(1);
-        // create_response = describe_index(pinecone_api_key, remote_index_name);
-    // }
-    // sleep(2); // TODO: ping the host with get_index_stats instead of pinging remote.io with describe_index
-    // return host;
+    // we don't want to ping pinecone.io with describe_index because pinecone.io may be aware of the index before
+    // the host is actually live. We poll the host for liveness with get_index_stats instead.
+    index_stats = remote_get_index_stats(pinecone_api_key, host);
+    while (index_stats == NULL) {
+        elog(DEBUG1, "Waiting for remote index to initialize...");
+        pg_usleep(1000000); // 1 second
+        index_stats = remote_get_index_stats(pinecone_api_key, host);
+    }
+    cJSON_Delete(index_stats);
+    return host;
 }
 
 // CREATE AND MISC

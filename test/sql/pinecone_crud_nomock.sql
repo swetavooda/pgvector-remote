@@ -4,7 +4,6 @@
 -- logging level
 SET client_min_messages = 'debug1';
 -- flush each vector individually
-SET remote.pinecone_
 -- disable flat scan to force use of the index
 SET enable_seqscan = off;
 -- Testing database is responsible for initializing the mock table with 

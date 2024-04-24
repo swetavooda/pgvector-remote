@@ -96,11 +96,11 @@ cJSON* generic_remote_request(const char *api_key, const char *url, const char *
     }
 
 
+    response_json = cJSON_Parse(response_data.data);
     // parse the response
     if (!expect_json_response) {
-        return NULL;
+        return response_json;
     }
-    response_json = cJSON_Parse(response_data.data);
 
     if (response_json == NULL) {
         elog(ERROR, "Failed to parse response from Remote API. Response: %s", response_data.data);
