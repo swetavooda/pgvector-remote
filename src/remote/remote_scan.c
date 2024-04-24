@@ -2,7 +2,7 @@
 #include <float.h>
 #include <time.h>
 
-#include "remote.h"
+#include "src/remote/remote.h"
 
 #include <storage/bufmgr.h>
 #include "catalog/pg_operator_d.h"

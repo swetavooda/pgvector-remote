@@ -16,16 +16,20 @@ ifeq ($(USE_MILVUS), 1)
 	SHLIB_LINK += -lmilvus
 	C_SOURCES += $(wildcard src/remote/clients/milvus/*.c)
 	CPP_SOURCES += $(wildcard src/remote/clients/milvus/*.cpp)
+	PG_CFLAGS += -DUSE_MILVUS
 endif
 # pinecone
 ifeq ($(USE_PINECONE), 1)
 	SHLIB_LINK += -lcurl
 	C_SOURCES += $(wildcard src/remote/clients/pinecone/*.c)
+	PG_CFLAGS += -DUSE_PINECONE
 endif
 
 C_OBJS = $(C_SOURCES:.c=.o)
 CPP_OBJS = $(CPP_SOURCES:.cpp=.o)
-SOURCES = $(C_SOURCES) $(CPP_SOURCES)
+
+
+ = $(C_SOURCES) $(CPP_SOURCES)
 OBJS = $(C_OBJS) $(CPP_OBJS)
 
 # print all sources and objects

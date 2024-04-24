@@ -1,18 +1,18 @@
 
-#include "remote/remote.h"
+#include "src/remote/remote.h"
 
 RemoteIndexInterface* remote_index_interfaces[NUM_PROVIDERS] = {0};
 
 // pinecone
 #ifdef USE_PINECONE
-#include "remote/clients/pinecone/pinecone.h"
+#include "src/remote/clients/pinecone/pinecone.h"
 char* pinecone_api_key = NULL; 
 int pinecone_network_cost = 0;
 int pinecone_vectors_per_request = 100; // declared in pinecone.h
 #endif
 // milvus
 #ifdef USE_MILVUS
-#include "remote/clients/milvus/milvus.h"
+#include "src/remote/clients/milvus/milvus.h"
 int milvus_network_cost = 0;
 char* milvus_api_key = NULL;
 char* milvus_cluster_host = NULL; // declared in milvus.h
