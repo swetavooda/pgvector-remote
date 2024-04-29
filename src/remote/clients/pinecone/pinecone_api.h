@@ -21,7 +21,7 @@ cJSON* remote_delete_vectors(const char *api_key, const char *index_host, cJSON 
 cJSON* remote_delete_index(const char *api_key, const char *index_name);
 cJSON* remote_delete_all(const char *api_key, const char *index_host);
 cJSON* remote_list_vectors(const char *api_key, const char *index_host, int limit, char* pagination_token);
-cJSON* remote_create_index(const char *api_key, const char *index_name, const int dimension, const char *metric, cJSON *spec);
+cJSON* pinecone_create_index(const char *api_key, const char *index_name, const int dimension, const char *metric, cJSON *spec);
 cJSON** remote_query_with_fetch(const char *api_key, const char *index_host, cJSON* request_body, bool with_fetch, cJSON* fetch_ids);
 cJSON* remote_bulk_upsert(const char *api_key, const char *index_host, cJSON *vectors, int batch_size);
 CURL* get_remote_query_handle(const char *api_key, const char *index_host, cJSON* request_body, ResponseData* response_data);

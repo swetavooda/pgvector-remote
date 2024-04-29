@@ -230,7 +230,7 @@ bool remote_gettuple(IndexScanDesc scan, ScanDirection dir)
         if (ItemPointerCompare(tid, new_tid) == 0) {
             // if the next tuple is the same as the current tuple, then we need to skip
             // N.B. we don't need a loop because the same tid appears at most twice in the sortstate
-            elog(DEBUG1, "Skipping duplicate tuple, found in both local buffer and remote index");
+            elog(DEBUG1, "Skipping duplicate tuple %d:%d, found in both local buffer and remote index", ItemPointerGetBlockNumber(tid),ItemPointerGetOffsetNumber(tid));
             so->more_tuples = tuplesort_gettupleslot(so->tid_sortstate, true, false, so->tid_sortslot, NULL);
         }
     }

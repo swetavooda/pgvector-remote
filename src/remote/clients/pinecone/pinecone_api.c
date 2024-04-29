@@ -125,7 +125,7 @@ cJSON* describe_index(const char *api_key, const char *index_name) {
 cJSON* remote_get_index_stats(const char *api_key, const char *index_host) {
     cJSON* resp;
     char url[100] = "https://"; strcat(url, index_host); strcat(url, "/describe_index_stats");
-    resp = generic_remote_request(api_key, url, "GET", NULL, true);
+    resp = generic_remote_request(api_key, url, "GET", NULL, false);
     return resp;
 }
 
@@ -170,7 +170,7 @@ cJSON* remote_list_vectors(const char *api_key, const char *index_host, int limi
  * pod: environment, replicas, pod_type, pods, shards, metadata_config
  * Refer to https://docs.pinecone.io/reference/create_index
  */
-cJSON* remote_create_index(const char *api_key, const char *index_name, const int dimension, const char *metric, cJSON *spec) {
+cJSON* pinecone_create_index(const char *api_key, const char *index_name, const int dimension, const char *metric, cJSON *spec) {
     cJSON *request = cJSON_CreateObject();
     cJSON_AddItemToObject(request, "name", cJSON_CreateString(index_name));
     cJSON_AddItemToObject(request, "dimension", cJSON_CreateNumber(dimension));

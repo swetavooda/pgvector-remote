@@ -34,7 +34,15 @@ cJSON* tuple_get_remote_vector(TupleDesc tup_desc, Datum *values, bool *isnull, 
     cJSON *metadata = cJSON_CreateObject();
     Vector *vector;
     cJSON *json_values;
+    if(isnull[0]){
+        elog(DEBUG1, "Cannot insert NULL vectors to pinecone.");
+        return NULL;
+    }
     vector = DatumGetVector(values[0]);
+    if(vector_eq_zero_internal(vector)) {
+            elog(DEBUG1, "Cannot insert zero vectors to pinecone.");
+        return NULL;
+    }
     json_values = cJSON_CreateFloatArray(vector->x, vector->dim);
     // prepare metadata
     for (int i = 1; i < tup_desc->natts; i++) // skip the first column which is the vector

@@ -86,14 +86,14 @@ char* pinecone_create_host_from_spec(int dimensions, VectorMetric metric, char* 
     char* pinecone_index_name = palloc(20);
     sprintf(pinecone_index_name, "pgvr-%u", index->rd_id);
     // TODO: remote index name
-    create_response = remote_create_index(pinecone_api_key, pinecone_index_name, dimensions, remote_metric_name, spec_json);
+    create_response = pinecone_create_index(pinecone_api_key, pinecone_index_name, dimensions, remote_metric_name, spec_json);
     host = cJSON_GetStringValue(cJSON_GetObjectItemCaseSensitive(create_response, "host"));
     // now we wait until the remote index is done initializing
     // todo: timeout and error handling
     // we don't want to ping pinecone.io with describe_index because pinecone.io may be aware of the index before
     // the host is actually live. We poll the host for liveness with get_index_stats instead.
     index_stats = remote_get_index_stats(pinecone_api_key, host);
-    while (index_stats == NULL) {
+    while (index_stats == NULL || cJSON_GetObjectItemCaseSensitive(index_stats, "totalVectorCount")==NULL) {
         elog(DEBUG1, "Waiting for remote index to initialize...");
         pg_usleep(1000000); // 1 second
         index_stats = remote_get_index_stats(pinecone_api_key, host);
@@ -232,11 +232,13 @@ ItemPointerData* pinecone_query_with_fetch(char* host, int top_k, PreparedQuery 
     int n_results;
     ItemPointerData* fetched_ctids = pinecone_extract_ctids_from_fetch_response(fetch_response, &n_results);
     // 2. return the best (first) checkpoint which is among the fetched
-    for (int i = 0; i < n_checkpoints; i++) {
+    bool br=false;
+    for (int i = 0; i < n_checkpoints && !br; i++) {
         RemoteCheckpoint checkpoint = checkpoints[i];
         for (int j = 0; j < n_results; j++) {
             if (ItemPointerEquals(&checkpoint.tid, &fetched_ctids[j])) {
                 *best_checkpoint_return = checkpoint;
+                br=true;
                 break;
             }
         }
@@ -268,6 +270,7 @@ void pinecone_append_prepare_bulk_insert(PreparedBulkInsert prepared_vectors, Tu
     cJSON* json_vectors = (cJSON*) prepared_vectors;
     char* vector_id = pinecone_id_from_heap_tid(*ctid);
     cJSON* json_vector = tuple_get_remote_vector(tupdesc, values, nulls, vector_id);
+    if(json_vector==NULL) return;
     cJSON_AddItemToArray(json_vectors, json_vector);
 }
 void pinecone_end_prepare_bulk_insert(PreparedBulkInsert prepared_vectors) {
